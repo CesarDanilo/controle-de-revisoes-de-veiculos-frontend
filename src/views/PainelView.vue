@@ -38,8 +38,6 @@ const loadDashboard = async () => {
     await fetchPeople()
     vehicles.value = await vehicleService.list()
 
-    // No global "all revisions" endpoint exists yet, so we aggregate
-    // per-vehicle — same approach already used in RevisionsModal.
     const results = await Promise.all(
       vehicles.value.map((vehicle) => revisionService.listByVehicle(vehicle.id))
     )
@@ -67,9 +65,6 @@ onMounted(loadDashboard)
       </router-link>
     </template>
 
-    <!-- Skeleton loading: shaped like the final grid so the layout doesn't
-         jump once data arrives, and it reads as "loading" faster than a
-         spinner would. -->
     <section v-if="isLoading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <div
         v-for="n in 4"

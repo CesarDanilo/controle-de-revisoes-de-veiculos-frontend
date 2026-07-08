@@ -10,6 +10,8 @@ const routes = [
   { path: '/painel', name: 'painel', component: PainelView },
   { path: '/people', name: 'Pessoas', component: PeopleView },
   { path: '/relatorios', name: 'relatorios', component: RelatoriosView },
+  { path: '/auth/callback', name: 'auth-callback', component: () => import('../views/AuthCallback.vue'),
+}
 ]
 
 export default createRouter({
