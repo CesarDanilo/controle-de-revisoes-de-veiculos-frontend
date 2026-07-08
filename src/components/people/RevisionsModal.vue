@@ -70,7 +70,10 @@ const loadAll = async () => {
     vehicles.value.forEach((vehicle, index) => {
       const raw = results[index]
       const list = Array.isArray(raw) ? raw : Array.isArray(raw?.data) ? raw.data : []
-      revisionsByVehicle[vehicle.id] = sortRevisions(list)
+
+      const scoped = list.filter((revision) => revision.vehicle_id === vehicle.id)
+
+      revisionsByVehicle[vehicle.id] = sortRevisions(scoped)
     })
   } finally {
     isLoading.value = false

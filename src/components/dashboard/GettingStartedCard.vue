@@ -9,12 +9,12 @@ import StepItem from './StepItem.vue'
 
     <ol class="mt-5 flex flex-col gap-4">
       <StepItem :number="1">
-        Cadastre uma
+        Cadastre um
         <router-link to="/people" class="font-medium text-ink-900 underline underline-offset-2">
-          people
+          Proprietário
         </router-link>.
       </StepItem>
-      <StepItem :number="2">Adicione os veículos dela.</StepItem>
+      <StepItem :number="2">Adicione os veículos dele.</StepItem>
       <StepItem :number="3">Registre as revisões de cada veículo.</StepItem>
       <StepItem :number="4">
         Consulte os
