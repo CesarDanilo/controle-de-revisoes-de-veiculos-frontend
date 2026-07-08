@@ -17,7 +17,6 @@ onMounted(async () => {
   }
 
   try {
-    // Busca os dados do usuário autenticado usando o token recebido
     const { data: user } = await api.get('/me', {
     headers: { Authorization: `Bearer ${token}` },
     })
