@@ -20,7 +20,7 @@ const handleLogout = () => {
 </script>
 
 <template>
-  <aside class="flex h-screen w-64 shrink-0 flex-col border-r border-surface-border bg-white">
+  <aside class="flex min-h-screen w-64 shrink-0 flex-col border-r border-surface-border bg-white">
     <div class="px-5 pb-6 pt-6">
       <BrandMark size="md" />
     </div>
