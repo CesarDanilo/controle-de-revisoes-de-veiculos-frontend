@@ -152,7 +152,7 @@ const closeRevisionsModal = () => {
 </script>
 
 <template>
-  <AppShell title="Pessoas" subtitle="Gerencie as pessoas cadastradas.">
+  <AppShell title="Proprietários" subtitle="Gerencie as pessoas cadastradas.">
     <template #actions>
       <BaseButton v-if="people.length" class="w-full sm:w-auto" @click="openNewPerson">
         <Plus :size="16" />
