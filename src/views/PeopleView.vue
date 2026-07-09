@@ -181,7 +181,6 @@ const closeRevisionsModal = () => {
     </EmptyState>
 
     <template v-else>
-      <!-- Barra de filtros -->
       <div class="mb-4 rounded-2xl border border-ink-100 p-4">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div class="relative">
@@ -250,8 +249,6 @@ const closeRevisionsModal = () => {
       </EmptyState>
 
       <template v-else>
-        <!-- Mobile: stacked cards. Tables force horizontal scroll or unreadably
-             tiny text on small screens, so below `sm` we switch to a card list. -->
         <div class="flex flex-col gap-3 sm:hidden">
           <div
             v-for="person in filteredPeople"
