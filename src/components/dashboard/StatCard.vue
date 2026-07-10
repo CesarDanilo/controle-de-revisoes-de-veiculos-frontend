@@ -7,7 +7,7 @@ defineProps({
 </script>
 
 <template>
-  <div class="rounded-2xl border border-surface-border bg-white p-5">
+  <div class="rounded-2xl border border-ink-100 bg-white p-5">
     <div class="flex items-center justify-between">
       <p class="text-xs font-semibold uppercase tracking-wide text-ink-500">{{ label }}</p>
       <component :is="icon" :size="18" class="text-brand-500" />
