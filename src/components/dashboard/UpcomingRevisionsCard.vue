@@ -59,7 +59,7 @@ const predictions = computed(() => {
 </script>
 
 <template>
-  <div class="rounded-2xl border border-surface-border bg-white p-6">
+  <div class="rounded-2xl border border-ink-100 bg-white p-6">
     <h2 class="text-base font-bold text-ink-900">Próximas revisões (previsão)</h2>
     <p class="mt-1 text-sm text-ink-500">Baseada no tempo médio entre revisões da people.</p>
 
