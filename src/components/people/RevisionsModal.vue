@@ -21,6 +21,7 @@ const formMode = ref('create') // 'create' | 'edit'
 const editingRevisionId = ref(null)
 const isSubmitting = ref(false)
 const formError = ref('')
+const fieldErrors = reactive({ next_revision_km: '' })
 const emptyForm = () => ({
   description: '',
   revision_date: new Date().toISOString().slice(0, 10),
@@ -90,6 +91,7 @@ const toggleForm = (vehicleId) => {
   formMode.value = 'create'
   editingRevisionId.value = null
   formError.value = ''
+  fieldErrors.next_revision_km = ''
   Object.assign(formData, emptyForm())
 }
 
@@ -100,6 +102,7 @@ const startEdit = (vehicleId, revision) => {
   formMode.value = 'edit'
   editingRevisionId.value = revision.id
   formError.value = ''
+  fieldErrors.next_revision_km = ''
   Object.assign(formData, {
     description: revision.description || '',
     revision_date: revision.revision_date ? revision.revision_date.slice(0, 10) : '',
@@ -123,10 +126,12 @@ const closeForm = () => {
   formMode.value = 'create'
   editingRevisionId.value = null
   formError.value = ''
+  fieldErrors.next_revision_km = ''
 }
 
 const submitRevision = async (vehicle) => {
   formError.value = ''
+  fieldErrors.next_revision_km = ''
 
   if (!vehicle?.id) {
     formError.value = 'Veículo inválido (ID não encontrado).'
@@ -145,6 +150,16 @@ const submitRevision = async (vehicle) => {
     new Date(formData.next_revision_date) < new Date(formData.revision_date)
   ) {
     formError.value = 'A próxima revisão não pode ser antes da data da revisão atual.'
+    return
+  }
+  if (
+    formData.next_revision_km !== null &&
+    formData.next_revision_km !== '' &&
+    formData.km !== null &&
+    formData.km !== '' &&
+    Number(formData.next_revision_km) <= Number(formData.km)
+  ) {
+    fieldErrors.next_revision_km = 'Deve ser maior que o KM informado.'
     return
   }
 
@@ -353,8 +368,15 @@ onMounted(loadAll)
                   type="number"
                   min="0"
                   placeholder="0"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1"
+                  :class="fieldErrors.next_revision_km
+                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                  @input="fieldErrors.next_revision_km = ''"
                 />
+                <p v-if="fieldErrors.next_revision_km" class="mt-1 text-[11px] text-red-600">
+                  {{ fieldErrors.next_revision_km }}
+                </p>
               </div>
             </div>
 
