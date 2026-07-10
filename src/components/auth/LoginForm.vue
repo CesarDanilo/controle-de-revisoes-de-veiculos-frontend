@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, reactive } from 'vue'
 import { useRouter } from 'vue-router'
-import { Mail, Lock, User, Eye, EyeOff, ArrowRight, AlertCircle } from '@lucide/vue'
+import { Mail, Lock, User, Eye, EyeOff, ArrowRight, AlertCircle, Check, X } from '@lucide/vue'
 import { z } from 'zod'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
@@ -24,6 +24,28 @@ const form = reactive({
 const rememberMe = ref(false)
 const showPassword = ref(false)
 const fieldErrors = ref({})
+
+// --- Password strength ---
+const passwordCriteria = computed(() => ({
+  length: form.password.length >= 8,
+  uppercase: /[A-Z]/.test(form.password),
+  lowercase: /[a-z]/.test(form.password),
+  number: /[0-9]/.test(form.password),
+  special: /[^A-Za-z0-9]/.test(form.password),
+}))
+
+const passwordScore = computed(() => {
+  if (!form.password) return 0
+  return Object.values(passwordCriteria.value).filter(Boolean).length
+})
+
+const passwordStrength = computed(() => {
+  const score = passwordScore.value
+  if (score === 0) return { label: '', color: '', width: '0%' }
+  if (score <= 2) return { label: 'Fraca', color: 'bg-red-500', textColor: 'text-red-600', width: '33%' }
+  if (score <= 4) return { label: 'Média', color: 'bg-amber-500', textColor: 'text-amber-600', width: '66%' }
+  return { label: 'Forte', color: 'bg-green-500', textColor: 'text-green-600', width: '100%' }
+})
 
 const toggleMode = () => {
   mode.value = isRegister.value ? 'login' : 'register'
@@ -127,6 +149,60 @@ const handleSubmit = async () => {
       <span v-if="fieldErrors.password" class="text-xs text-red-600">
         {{ fieldErrors.password[0] }}
       </span>
+
+      <!-- Password strength indicator: register mode only -->
+      <div v-if="isRegister && form.password" class="flex flex-col gap-2 pt-1">
+        <div class="flex items-center gap-2">
+          <div class="flex h-1.5 flex-1 overflow-hidden rounded-full bg-ink-100">
+            <div
+              class="h-full rounded-full transition-all duration-300 ease-out"
+              :class="passwordStrength.color"
+              :style="{ width: passwordStrength.width }"
+            />
+          </div>
+          <span class="w-10 shrink-0 text-xs font-medium" :class="passwordStrength.textColor">
+            {{ passwordStrength.label }}
+          </span>
+        </div>
+
+        <ul class="grid grid-cols-2 gap-x-3 gap-y-1">
+          <li
+            class="flex items-center gap-1 text-[11px] transition-colors"
+            :class="passwordCriteria.length ? 'text-green-600' : 'text-ink-400'"
+          >
+            <component :is="passwordCriteria.length ? Check : X" :size="12" class="shrink-0" />
+            Mínimo 8 caracteres
+          </li>
+          <li
+            class="flex items-center gap-1 text-[11px] transition-colors"
+            :class="passwordCriteria.uppercase ? 'text-green-600' : 'text-ink-400'"
+          >
+            <component :is="passwordCriteria.uppercase ? Check : X" :size="12" class="shrink-0" />
+            Letra maiúscula
+          </li>
+          <li
+            class="flex items-center gap-1 text-[11px] transition-colors"
+            :class="passwordCriteria.lowercase ? 'text-green-600' : 'text-ink-400'"
+          >
+            <component :is="passwordCriteria.lowercase ? Check : X" :size="12" class="shrink-0" />
+            Letra minúscula
+          </li>
+          <li
+            class="flex items-center gap-1 text-[11px] transition-colors"
+            :class="passwordCriteria.number ? 'text-green-600' : 'text-ink-400'"
+          >
+            <component :is="passwordCriteria.number ? Check : X" :size="12" class="shrink-0" />
+            Número
+          </li>
+          <li
+            class="flex items-center gap-1 text-[11px] transition-colors"
+            :class="passwordCriteria.special ? 'text-green-600' : 'text-ink-400'"
+          >
+            <component :is="passwordCriteria.special ? Check : X" :size="12" class="shrink-0" />
+            Caractere especial
+          </li>
+        </ul>
+      </div>
     </div>
 
     <div v-if="!isRegister" class="flex items-center justify-between">
