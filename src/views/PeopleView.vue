@@ -69,6 +69,18 @@ const clearFilters = () => {
 }
 // --- fim filtros ---
 
+// --- Avatar ---
+const getInitials = (name) => {
+  if (!name) return '?'
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('')
+}
+// --- fim avatar ---
+
 onMounted(fetchPeople)
 
 const openNewPerson = () => {
@@ -181,7 +193,7 @@ const closeRevisionsModal = () => {
     </EmptyState>
 
     <template v-else>
-      <div class="mb-4 rounded-2xl border border-ink-100 p-4">
+      <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div class="relative">
             <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
@@ -249,15 +261,21 @@ const closeRevisionsModal = () => {
       </EmptyState>
 
       <template v-else>
+        <!-- mobile: cards -->
         <div class="flex flex-col gap-3 sm:hidden">
           <div
             v-for="person in filteredPeople"
             :key="person.id"
-            class="rounded-2xl border border-ink-100 p-4"
+            class="rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03] transition-shadow active:shadow-none"
           >
-            <p class="truncate text-sm font-semibold text-ink-900">{{ person.name }}</p>
+            <div class="flex items-center gap-3">
+              <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
+                {{ getInitials(person.name) }}
+              </div>
+              <p class="truncate text-sm font-semibold text-ink-900">{{ person.name }}</p>
+            </div>
 
-            <div class="mt-2 flex flex-col gap-1 text-xs text-ink-500">
+            <div class="mt-3 flex flex-col gap-1.5 text-xs text-ink-500">
               <div class="flex items-center gap-1.5">
                 <Mail :size="12" class="shrink-0 text-ink-300" />
                 <span class="truncate">{{ person.email || '—' }}</span>
@@ -272,7 +290,7 @@ const closeRevisionsModal = () => {
               </div>
             </div>
 
-            <div class="mt-3 flex items-center justify-end gap-1 border-t border-ink-100 pt-3">
+            <div class="mt-3 flex items-center justify-end gap-1 border-t border-ink-100/70 pt-3">
               <button
                 type="button"
                 class="rounded-lg p-2.5 text-ink-400 transition-colors active:bg-brand-50 active:text-brand-600"
@@ -310,26 +328,37 @@ const closeRevisionsModal = () => {
         </div>
 
         <!-- sm and up: full table -->
-        <div class="hidden overflow-hidden rounded-2xl border border-ink-100 sm:block">
+        <div class="hidden overflow-hidden rounded-2xl border border-ink-100/70 bg-white shadow-sm shadow-ink-900/[0.03] sm:block">
           <div class="overflow-x-auto">
             <table class="w-full text-left text-sm">
-              <thead class="bg-ink-50 text-ink-500">
+              <thead class="bg-ink-50/60">
                 <tr>
-                  <th class="px-4 py-3 font-medium">Nome</th>
-                  <th class="px-4 py-3 font-medium">E-mail</th>
-                  <th class="px-4 py-3 font-medium">Telefone</th>
-                  <th class="px-4 py-3 font-medium">CPF</th>
-                  <th class="px-4 py-3 font-medium text-right">Ações</th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Nome</th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">E-mail</th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Telefone</th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">CPF</th>
+                  <th class="px-5 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-ink-400">Ações</th>
                 </tr>
               </thead>
-              <tbody class="divide-y divide-ink-100">
-                <tr v-for="person in filteredPeople" :key="person.id" class="text-ink-700">
-                  <td class="px-4 py-3">{{ person.name }}</td>
-                  <td class="px-4 py-3">{{ person.email }}</td>
-                  <td class="px-4 py-3">{{ person.phone }}</td>
-                  <td class="px-4 py-3">{{ person.document }}</td>
-                  <td class="px-4 py-3">
-                    <div class="flex justify-end gap-2">
+              <tbody class="divide-y divide-ink-100/60">
+                <tr
+                  v-for="person in filteredPeople"
+                  :key="person.id"
+                  class="group text-ink-700 transition-colors hover:bg-ink-50/50"
+                >
+                  <td class="px-5 py-3.5">
+                    <div class="flex items-center gap-3">
+                      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
+                        {{ getInitials(person.name) }}
+                      </div>
+                      <span class="font-medium text-ink-900">{{ person.name }}</span>
+                    </div>
+                  </td>
+                  <td class="px-5 py-3.5 text-ink-500">{{ person.email || '—' }}</td>
+                  <td class="px-5 py-3.5 text-ink-500">{{ person.phone || '—' }}</td>
+                  <td class="px-5 py-3.5 text-ink-500">{{ person.document || '—' }}</td>
+                  <td class="px-5 py-3.5">
+                    <div class="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                       <button
                         type="button"
                         class="rounded-lg p-2 text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
