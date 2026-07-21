@@ -30,6 +30,9 @@ const emptyForm = () => ({
 const form = reactive(emptyForm())
 const editingVehicleId = ref(null)
 
+// snapshot normalizado do veículo original (usado pra detectar o que mudou)
+const originalSnapshot = ref(null)
+
 const vehicles = ref([])
 const isLoadingVehicles = ref(true)
 
@@ -70,6 +73,7 @@ onMounted(async () => {
 const resetForm = () => {
   Object.assign(form, emptyForm())
   editingVehicleId.value = null
+  originalSnapshot.value = null
   fieldErrors.value = {}
 }
 
@@ -82,6 +86,24 @@ const selectForEdit = (vehicle) => {
   form.people_id = props.person.id
   editingVehicleId.value = vehicle.id
   fieldErrors.value = {}
+
+  // normaliza o estado original pelo mesmo schema, pra comparar "de igual pra igual" depois
+  const parsed = vehicleSchema.safeParse(form)
+  originalSnapshot.value = parsed.success ? parsed.data : null
+}
+
+// retorna só as chaves que mudaram entre o snapshot original e os dados validados atuais
+const getChangedFields = (validatedData) => {
+  if (!originalSnapshot.value) return validatedData // fallback: sem snapshot, envia tudo
+
+  const changed = {}
+  for (const key of Object.keys(validatedData)) {
+    if (key === 'people_id') continue // nunca muda durante a edição, ignora na comparação
+    if (validatedData[key] !== originalSnapshot.value[key]) {
+      changed[key] = validatedData[key]
+    }
+  }
+  return changed
 }
 
 const openBrandCreation = () => {
@@ -122,20 +144,45 @@ const handleSubmit = async () => {
   }
 
   fieldErrors.value = {}
-  isSubmitting.value = true
-  const payload = { ...result.data, year: Number(result.data.year) }
 
-  try {
-    if (editingVehicleId.value) {
+  // --- modo edição: verifica se algo realmente mudou antes de chamar a API ---
+  if (isEditing.value) {
+    const changedFields = getChangedFields(result.data)
+
+    if (Object.keys(changedFields).length === 0) {
+      toast.info('Nenhuma alteração foi feita.')
+      return
+    }
+
+    isSubmitting.value = true
+    // se "year" estiver entre os campos alterados, converte pra number antes de enviar
+    const payload = 'year' in changedFields
+      ? { ...changedFields, year: Number(changedFields.year) }
+      : changedFields
+
+    try {
       const updated = await vehicleService.update(editingVehicleId.value, payload)
       const index = vehicles.value.findIndex((v) => v.id === editingVehicleId.value)
       if (index !== -1) vehicles.value[index] = updated
       toast.success('Veículo atualizado com sucesso!')
-    } else {
-      const created = await vehicleService.create(payload)
-      vehicles.value.unshift(created)
-      toast.success('Veículo cadastrado com sucesso!')
+      resetForm()
+    } catch (error) {
+      const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar o veículo.'
+      toast.error(message)
+    } finally {
+      isSubmitting.value = false
     }
+    return
+  }
+
+  // --- modo criação: comportamento original, envia tudo ---
+  isSubmitting.value = true
+  const payload = { ...result.data, year: Number(result.data.year) }
+
+  try {
+    const created = await vehicleService.create(payload)
+    vehicles.value.unshift(created)
+    toast.success('Veículo cadastrado com sucesso!')
     resetForm()
   } catch (error) {
     const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar o veículo.'
