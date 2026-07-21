@@ -5,7 +5,7 @@ import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
-import { vehicleSchema } from '../../schemas/vehicle.schema'
+import { vehicleSchema, carColors } from '../../schemas/vehicle.schema'
 import { brandService } from '../../services/brand.service'
 import { vehicleService } from '../../services/vehicle.service'
 import { useToast } from '../../composables/useToast'
@@ -95,7 +95,7 @@ const cancelBrandCreation = () => {
 }
 
 const saveNewBrand = async () => {
-  const name = newBrandName.value.trim()
+  const name = newBrandName.value.toUpperCase().trim()
   if (!name) return
 
   isSavingBrand.value = true
@@ -307,18 +307,40 @@ const confirmDeleteVehicle = async () => {
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <BaseInput v-model="form.model" label="Modelo" :icon="Car" placeholder="Ex: Civic" />
+            <BaseInput
+              v-model="form.model"
+              label="Modelo"
+              :icon="Car"
+              placeholder="Ex: Civic"
+              maxlength="40"
+            />
             <span v-if="fieldErrors.model" class="text-xs text-red-600">{{ fieldErrors.model[0] }}</span>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
             <div class="flex flex-col gap-1.5">
-              <BaseInput v-model="form.year" label="Ano" :icon="Calendar" placeholder="2024" />
+              <BaseInput
+                v-model="form.year"
+                label="Ano"
+                :icon="Calendar"
+                placeholder="2024"
+                inputmode="numeric"
+                maxlength="4"
+              />
               <span v-if="fieldErrors.year" class="text-xs text-red-600">{{ fieldErrors.year[0] }}</span>
             </div>
 
             <div class="flex flex-col gap-1.5">
-              <BaseInput v-model="form.color" label="Cor" :icon="Palette" placeholder="Prata" />
+              <label class="text-sm font-medium text-ink-700">Cor</label>
+              <select
+                v-model="form.color"
+                class="rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                <option value="" disabled>Selecione</option>
+                <option v-for="color in carColors" :key="color" :value="color">
+                  {{ color }}
+                </option>
+              </select>
               <span v-if="fieldErrors.color" class="text-xs text-red-600">{{ fieldErrors.color[0] }}</span>
             </div>
           </div>
