@@ -87,6 +87,36 @@ function createNumericGuard(getRawValue, maxLength) {
   }
 }
 
+function createLengthGuard(getValue, maxLength) {
+  return function (e) {
+    const controlKeys = [
+      'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+      'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+    ]
+    if (controlKeys.includes(e.key)) return
+    if (e.ctrlKey || e.metaKey) return
+
+    // ignora teclas de tamanho > 1 que não sejam impressão de caractere (ex: Shift, CapsLock, F1...)
+    if (e.key.length > 1) return
+
+    const target = e.target
+    const hasSelection = target.selectionStart !== target.selectionEnd
+    if (hasSelection) return
+
+    if (getValue().length >= maxLength) {
+      e.preventDefault()
+    }
+  }
+}
+
+const sanitizeNameLength = () => {
+  if (form.name.length > 100) {
+    form.name = form.name.slice(0, 100)
+  }
+}
+
+const blockNameOverflow = createLengthGuard(() => form.name, 100)
+
 const blockPhoneOverflow = createNumericGuard(() => form.phone, 11)
 const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
 
@@ -96,7 +126,15 @@ const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
   <BaseModal :title="isEditing ? 'Editar pessoa' : 'Nova pessoa'" @close="emit('close')">
     <form class="flex flex-col gap-4" @submit.prevent="handleSubmit" novalidate>
       <div class="flex flex-col gap-1.5">
-        <BaseInput v-model="form.name" label="Nome" :icon="User" placeholder="Nome completo" />
+        <BaseInput
+          v-model="form.name"
+          label="Nome"
+          :icon="User"
+          placeholder="Nome completo"
+          maxlength="100"
+          @keydown="blockNameOverflow"
+          @input="sanitizeNameLength"
+        />
         <span v-if="fieldErrors.name" class="text-xs text-red-600">{{ fieldErrors.name[0] }}</span>
       </div>
 
