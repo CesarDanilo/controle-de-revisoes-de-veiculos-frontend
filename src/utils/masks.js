@@ -10,11 +10,27 @@ export function maskPhone(rawValue) {
     return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`
   }
   
-  export function maskCPF(rawValue) {
-    const d = (rawValue ?? '').replace(/\D/g, '').slice(0, 11)
-    if (d.length === 0) return ''
-    if (d.length <= 3) return d
-    if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
-    if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
-    return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+export function maskCPF(rawValue) {
+  const d = (rawValue ?? '').replace(/\D/g, '').slice(0, 11)
+  if (d.length === 0) return ''
+  if (d.length <= 3) return d
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+}
+
+
+// bloqueia digitação de qualquer coisa que não seja número
+// (mantém teclas de controle: backspace, delete, tab, setas, etc.)
+export function blockNonNumericKey(e) {
+  const controlKeys = [
+    'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+  ]
+  if (controlKeys.includes(e.key)) return
+  if (e.ctrlKey || e.metaKey) return
+
+  if (!/^\d$/.test(e.key)) {
+    e.preventDefault()
   }
+}

@@ -10,7 +10,7 @@ import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import RevisionsModal from '../components/people/RevisionsModal.vue'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
-import { maskPhone, maskCPF } from '../utils/masks'
+import { maskPhone, maskCPF, blockNonNumericKey } from '../utils/masks'
 
 const { people, isLoading, errorMessage, fetchPeople, createPerson, updatePerson, deletePerson } =
   usePeople()
@@ -162,6 +162,10 @@ const closeRevisionsModal = () => {
   isRevisionsModalOpen.value = false
   personForRevisions.value = null
 }
+
+const sanitizeNumericFilter = (field) => {
+  filters.value[field] = filters.value[field].replace(/\D/g, '').slice(0, 11)
+}
 </script>
 
 <template>
@@ -221,6 +225,8 @@ const closeRevisionsModal = () => {
               type="text"
               placeholder="Filtrar por telefone"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+              @keydown="blockNonNumericKey"
+              @input="sanitizeNumericFilter('phone')"
             />
           </div>
           <div class="relative">
@@ -230,6 +236,8 @@ const closeRevisionsModal = () => {
               type="text"
               placeholder="Filtrar por CPF"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+              @keydown="blockNonNumericKey"
+              @input="sanitizeNumericFilter('document')"
             />
           </div>
         </div>

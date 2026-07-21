@@ -68,6 +68,6 @@ export const personSchema = z.object({
 
   gender: z
     .enum(['M', 'F', 'O'], {
-      errorMap: () => ({ message: 'Selecione um gênero.' }),
+      error: () => ({ message: 'Selecione um gênero.' }),
     }),
 })
