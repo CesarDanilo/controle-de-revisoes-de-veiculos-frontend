@@ -10,6 +10,7 @@ import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import RevisionsModal from '../components/people/RevisionsModal.vue'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
+import { maskPhone, maskCPF } from '../utils/masks'
 
 const { people, isLoading, errorMessage, fetchPeople, createPerson, updatePerson, deletePerson } =
   usePeople()
@@ -282,11 +283,11 @@ const closeRevisionsModal = () => {
               </div>
               <div class="flex items-center gap-1.5">
                 <Phone :size="12" class="shrink-0 text-ink-300" />
-                <span class="truncate">{{ person.phone || '—' }}</span>
+                <span class="truncate">{{ maskPhone(person.phone) || '—' }}</span>
               </div>
               <div class="flex items-center gap-1.5">
                 <IdCard :size="12" class="shrink-0 text-ink-300" />
-                <span class="truncate">{{ person.document || '—' }}</span>
+                <span class="truncate">{{ maskCPF(person.document) || '—' }}</span>
               </div>
             </div>
 
@@ -355,8 +356,8 @@ const closeRevisionsModal = () => {
                     </div>
                   </td>
                   <td class="px-5 py-3.5 text-ink-500">{{ person.email || '—' }}</td>
-                  <td class="px-5 py-3.5 text-ink-500">{{ person.phone || '—' }}</td>
-                  <td class="px-5 py-3.5 text-ink-500">{{ person.document || '—' }}</td>
+                  <td class="px-5 py-3.5 text-ink-500">{{ maskPhone(person.phone) || '—' }}</td>
+                  <td class="px-5 py-3.5 text-ink-500">{{ maskCPF(person.document) || '—' }}</td>
                   <td class="px-5 py-3.5">
                     <div class="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                       <button
