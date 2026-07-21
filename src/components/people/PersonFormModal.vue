@@ -1,5 +1,5 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, computed } from 'vue'
 import { User, Mail, Phone, IdCard, Calendar } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
@@ -17,10 +17,46 @@ const isEditing = !!props.person
 const form = reactive({
   name: props.person?.name ?? '',
   email: props.person?.email ?? '',
-  phone: props.person?.phone ?? '',
-  document: props.person?.document ?? '',
+  phone: props.person?.phone ?? '',       // guarda só dígitos
+  document: props.person?.document ?? '', // guarda só dígitos
   birth_date: props.person?.birth_date ?? '',
   gender: props.person?.gender ?? '',
+})
+
+// ---------- máscaras ----------
+function maskPhone(rawDigits) {
+  const d = rawDigits.slice(0, 11)
+  const ddd = d.slice(0, 2)
+  const rest = d.slice(2)
+
+  if (d.length === 0) return ''
+  if (d.length <= 2) return `(${ddd}`
+  if (rest.length <= 4) return `(${ddd}) ${rest}`
+  if (d.length <= 10) return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`
+  return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`
+}
+
+function maskCPF(rawDigits) {
+  const d = rawDigits.slice(0, 11)
+  if (d.length <= 3) return d
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+}
+
+// ---------- computeds ligados ao v-model dos inputs ----------
+const phoneModel = computed({
+  get: () => maskPhone(form.phone),
+  set: (val) => {
+    form.phone = val.replace(/\D/g, '').slice(0, 11)
+  },
+})
+
+const documentModel = computed({
+  get: () => maskCPF(form.document),
+  set: (val) => {
+    form.document = val.replace(/\D/g, '').slice(0, 11)
+  },
 })
 
 const fieldErrors = ref({})
@@ -58,12 +94,26 @@ const handleSubmit = async () => {
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <BaseInput v-model="form.phone" label="Telefone" :icon="Phone" placeholder="(00) 00000-0000" />
+        <BaseInput
+          v-model="phoneModel"
+          label="Telefone"
+          :icon="Phone"
+          placeholder="(00) 00000-0000"
+          inputmode="numeric"
+          maxlength="15"
+        />
         <span v-if="fieldErrors.phone" class="text-xs text-red-600">{{ fieldErrors.phone[0] }}</span>
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <BaseInput v-model="form.document" label="CPF" :icon="IdCard" placeholder="000.000.000-00" />
+        <BaseInput
+          v-model="documentModel"
+          label="CPF"
+          :icon="IdCard"
+          placeholder="000.000.000-00"
+          inputmode="numeric"
+          maxlength="14"
+        />
         <span v-if="fieldErrors.document" class="text-xs text-red-600">{{ fieldErrors.document[0] }}</span>
       </div>
 

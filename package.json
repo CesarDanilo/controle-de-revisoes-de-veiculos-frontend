@@ -12,6 +12,7 @@
     "@lucide/vue": "^1.23.0",
     "axios": "^1.18.1",
     "chart.js": "^4.5.1",
+    "tldts": "^7.4.9",
     "vue": "^3.5.39",
     "vue-chartjs": "^5.3.4",
     "vue-router": "^4.6.4",
