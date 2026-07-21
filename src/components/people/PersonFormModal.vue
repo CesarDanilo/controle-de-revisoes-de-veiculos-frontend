@@ -78,6 +78,38 @@ const handleSubmit = async () => {
     isSubmitting.value = false
   }
 }
+
+function createNumericGuard(getRawValue, maxLength) {
+  return function (e) {
+    const controlKeys = [
+      'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+      'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+    ]
+    if (controlKeys.includes(e.key)) return
+    if (e.ctrlKey || e.metaKey) return
+
+    // bloqueia qualquer coisa que não seja dígito
+    if (!/^\d$/.test(e.key)) {
+      e.preventDefault()
+      return
+    }
+
+    // se o usuário tem texto selecionado, o digito vai substituir a seleção,
+    // então não bloqueia mesmo estando no limite
+    const target = e.target
+    const hasSelection = target.selectionStart !== target.selectionEnd
+    if (hasSelection) return
+
+    // bloqueia se já atingiu o limite de dígitos "reais" (sem máscara)
+    if (getRawValue().length >= maxLength) {
+      e.preventDefault()
+    }
+  }
+}
+
+const blockPhoneOverflow = createNumericGuard(() => form.phone, 11)
+const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
+
 </script>
 
 <template>
@@ -101,6 +133,7 @@ const handleSubmit = async () => {
           placeholder="(00) 00000-0000"
           inputmode="numeric"
           maxlength="15"
+          @keydown="blockPhoneOverflow"
         />
         <span v-if="fieldErrors.phone" class="text-xs text-red-600">{{ fieldErrors.phone[0] }}</span>
       </div>
@@ -112,7 +145,8 @@ const handleSubmit = async () => {
           :icon="IdCard"
           placeholder="000.000.000-00"
           inputmode="numeric"
-          maxlength="14"
+          maxlength=14
+          @keydown="blockDocumentOverflow"
         />
         <span v-if="fieldErrors.document" class="text-xs text-red-600">{{ fieldErrors.document[0] }}</span>
       </div>
