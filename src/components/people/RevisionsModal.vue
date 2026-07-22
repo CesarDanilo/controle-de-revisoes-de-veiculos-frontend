@@ -55,9 +55,19 @@ const confirmingDeleteId = ref(null)
 const deletingRevisionId = ref(null)
 const deleteErrorByVehicle = reactive({})
 
+// ---------- formatação de data (FIX timezone) ----------
+// Antes: new Date(dateStr).toLocaleDateString('pt-BR')
+// Problema: new Date('2026-07-22') é interpretado como 2026-07-22T00:00:00Z (UTC).
+// Ao converter pro horário local (Brasil = UTC-3), meia-noite UTC vira 21h do dia
+// ANTERIOR, e o toLocaleDateString mostrava a data errada (um dia a menos).
+// Correção: extrai ano/mês/dia direto da string, sem nunca criar um objeto Date.
 const formatDate = (dateStr) => {
   if (!dateStr) return '—'
-  return new Date(dateStr).toLocaleDateString('pt-BR')
+  const isoPart = String(dateStr).slice(0, 10)
+  const match = isoPart.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return dateStr
+  const [, year, month, day] = match
+  return `${day}/${month}/${year}`
 }
 
 const formatCurrency = (value) => {
@@ -65,12 +75,14 @@ const formatCurrency = (value) => {
   return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
+// ---------- isOverdue (FIX timezone) ----------
+// Mesmo problema do formatDate: new Date(dateStr) fica em meia-noite UTC, enquanto
+// "today" é meia-noite local. Isso podia marcar uma revisão de HOJE como atrasada.
+// Correção: compara strings yyyy-mm-dd diretamente, sem criar Date a partir do ISO.
 const isOverdue = (dateStr) => {
   if (!dateStr) return false
-  const date = new Date(dateStr)
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  return date < today
+  const todayISO = new Date().toLocaleDateString('sv-SE') // yyyy-mm-dd no fuso local
+  return String(dateStr).slice(0, 10) < todayISO
 }
 
 const sortRevisions = (list) =>
