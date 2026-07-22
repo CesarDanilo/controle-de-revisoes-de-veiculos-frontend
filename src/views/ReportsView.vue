@@ -14,6 +14,7 @@ import KpiCard from '../components/reports/KpiCard.vue'
 import RankingList from '../components/reports/RankingList.vue'
 import UpcomingRevisionsPanel from '../components/reports/UpcomingRevisionsPanel.vue'
 import { useReports } from '../composables/useReports'
+import { maskPhone } from '../utils/masks'
 
 const { data, isLoading, errorMessage, fetchVehicleReports, fetchPeopleReports, fetchRevisionReports } =
   useReports()
@@ -156,6 +157,12 @@ const kpiProximasRevisoes = computed(
 // ---------------------------------------------------------------------
 const revisionsByPeriodFormatted = computed(() =>
   data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) }))
+)
+
+// Telefone chega do backend só com dígitos (ex: "11987654321"); aplica a
+// mesma máscara usada no formulário de cadastro pra exibir "(00) 00000-0000".
+const allPeopleFormatted = computed(() =>
+  data.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) }))
 )
 
 // ---------------------------------------------------------------------
@@ -394,7 +401,7 @@ const activeDetailTab = ref('revisions')
             { key: 'email', label: 'E-mail' },
             { key: 'phone', label: 'Telefone' },
           ]"
-          :rows="data.allPeople"
+          :rows="allPeopleFormatted"
         />
       </ReportPanel>
     </template>
