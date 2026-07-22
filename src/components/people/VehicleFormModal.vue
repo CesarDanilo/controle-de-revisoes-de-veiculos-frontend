@@ -186,7 +186,11 @@ const handleSubmit = async () => {
     resetForm()
   } catch (error) {
     const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar o veículo.'
-    toast.error(message)
+    if(message == "The license plate has already been taken.") {
+      toast.error("Já existe um veículo com essa placa!")
+    }else{
+      toast.error(message)
+    }
   } finally {
     isSubmitting.value = false
   }
