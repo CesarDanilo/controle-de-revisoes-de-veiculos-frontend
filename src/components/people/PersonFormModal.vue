@@ -6,12 +6,15 @@ import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import { personSchema } from '../../schemas/person.schema'
 import { maskPhone, maskCPF } from '../../utils/masks'
+import { useToast } from '../../composables/useToast'
 
 const props = defineProps({
   person: { type: Object, default: null },
 })
 
 const emit = defineEmits(['close', 'submit'])
+
+const toast = useToast()
 
 const isEditing = !!props.person
 
@@ -23,6 +26,38 @@ const form = reactive({
   birth_date: props.person?.birth_date ?? '',
   gender: props.person?.gender ?? '',
 })
+
+// ---------- snapshot original (só relevante no modo edição) ----------
+// Usado pra comparar "de igual pra igual" no submit e evitar request
+// desnecessário quando nada foi alterado.
+const originalSnapshot = isEditing
+  ? {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      phone: form.phone,
+      document: form.document,
+      birth_date: form.birth_date,
+      gender: form.gender,
+    }
+  : null
+
+function buildComparablePayload() {
+  return {
+    name: form.name.trim(),
+    email: form.email.trim(),
+    phone: form.phone,
+    document: form.document,
+    birth_date: form.birth_date,
+    gender: form.gender,
+  }
+}
+
+function hasChanges() {
+  if (!originalSnapshot) return true // criação: sempre "tem mudança" (não há original pra comparar)
+
+  const current = buildComparablePayload()
+  return Object.keys(current).some((key) => current[key] !== originalSnapshot[key])
+}
 
 // ---------- computeds ligados ao v-model dos inputs ----------
 const phoneModel = computed({
@@ -51,6 +86,13 @@ const handleSubmit = async () => {
   }
 
   fieldErrors.value = {}
+
+  // --- modo edição: só faz o request se algo realmente mudou ---
+  if (isEditing && !hasChanges()) {
+    toast.info('Nenhuma alteração foi feita.')
+    return
+  }
+
   isSubmitting.value = true
   try {
     await emit('submit', result.data)
