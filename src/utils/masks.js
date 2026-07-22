@@ -34,27 +34,3 @@ export function blockNonNumericKey(e) {
     e.preventDefault()
   }
 }
-
-export function createLengthGuard(getValue, maxLength) {
-  return function (e) {
-    const controlKeys = [
-      'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
-      'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
-    ]
-    if (controlKeys.includes(e.key)) return
-    if (e.ctrlKey || e.metaKey) return
-
-    // ignora teclas de tamanho > 1 que não sejam impressão de caractere (ex: Shift, CapsLock, F1...)
-    if (e.key.length > 1) return
-
-    const target = e.target
-    const hasSelection = target.selectionStart !== target.selectionEnd
-    if (hasSelection) return
-
-    if (getValue().length >= maxLength) {
-      e.preventDefault()
-    }
-  }
-}
-
-const blockNameOverflow = createLengthGuard(() => form.name, 100)

@@ -1,15 +1,18 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { Car, Wrench, Plus, X, Loader2, AlertCircle, Pencil, Trash2, Check } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import { vehicleService } from '../../services/vehicle.service'
 import { revisionService } from '../../services/revision.service'
+import { useToast } from '../../composables/useToast'
 
 const props = defineProps({
   person: { type: Object, required: true },
 })
 
 const emit = defineEmits(['close'])
+
+const toast = useToast()
 
 const vehicles = ref([])
 const revisionsByVehicle = reactive({})
@@ -20,17 +23,32 @@ const openFormVehicleId = ref(null)
 const formMode = ref('create') // 'create' | 'edit'
 const editingRevisionId = ref(null)
 const isSubmitting = ref(false)
-const formError = ref('')
-const fieldErrors = reactive({ next_revision_km: '' })
+const formError = ref('') // erros gerais/backend, não ligados a um campo específico
+
+const DESCRIPTION_MAX_LENGTH = 150
+
+const emptyFieldErrors = () => ({
+  description: '',
+  revision_date: '',
+  cost: '',
+  next_revision_date: '',
+  next_revision_km: '',
+})
+const fieldErrors = reactive(emptyFieldErrors())
+
+// custo nasce em 0 (não null) — pagamento é sempre informado, mesmo que gratuito
 const emptyForm = () => ({
   description: '',
   revision_date: new Date().toISOString().slice(0, 10),
   km: null,
-  cost: null,
+  cost: 0,
   next_revision_date: '',
   next_revision_km: null,
 })
 const formData = reactive(emptyForm())
+
+// snapshot normalizado da revisão original (usado pra detectar o que mudou na edição)
+const originalSnapshot = ref(null)
 
 // --- Delete state ---
 const confirmingDeleteId = ref(null)
@@ -57,6 +75,159 @@ const isOverdue = (dateStr) => {
 
 const sortRevisions = (list) =>
   [...list].sort((a, b) => new Date(b.revision_date) - new Date(a.revision_date))
+
+// ---------- limite de dígitos do KM ----------
+const MAX_KM_DIGITS = 7 // permite até 9.999.999 km
+
+function blockKmOverflow(e) {
+  const controlKeys = [
+    'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+  ]
+  if (controlKeys.includes(e.key)) return
+  if (e.ctrlKey || e.metaKey) return
+  if (!/^\d$/.test(e.key)) return // deixa o navegador barrar não-dígito (type=number já ajuda)
+
+  const target = e.target
+  const hasSelection = target.selectionStart !== target.selectionEnd
+  if (hasSelection) return
+
+  if (target.value.length >= MAX_KM_DIGITS) {
+    e.preventDefault()
+  }
+}
+
+// ---------- máscara de moeda para o custo, com limite ----------
+// digita "1590" -> mostra "15,90" (preenche da direita, como caixa eletrônico)
+const MAX_COST_DIGITS = 8 // até R$ 999.999,99 — ajuste conforme a realidade do seu negócio
+
+const costModel = computed({
+  get() {
+    if (formData.cost === null || formData.cost === undefined || formData.cost === '') return ''
+    return Number(formData.cost).toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  },
+  set(val) {
+    fieldErrors.cost = ''
+    const digits = val.replace(/\D/g, '').slice(0, MAX_COST_DIGITS)
+    if (!digits) {
+      // campo limpo pelo usuário: fica temporariamente vazio até o submit validar
+      formData.cost = null
+      return
+    }
+    formData.cost = Number(digits) / 100
+  },
+})
+
+// ---------- bloqueio de digitação ao atingir o limite do custo ----------
+function blockCostOverflow(e) {
+  const controlKeys = [
+    'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+  ]
+  if (controlKeys.includes(e.key)) return
+  if (e.ctrlKey || e.metaKey) return
+
+  // campo é só de dígitos (a formatação de vírgula/ponto é automática) — bloqueia letra/símbolo
+  if (!/^\d$/.test(e.key)) {
+    e.preventDefault()
+    return
+  }
+
+  const target = e.target
+  const hasSelection = target.selectionStart !== target.selectionEnd
+  if (hasSelection) return
+
+  const currentDigits = target.value.replace(/\D/g, '')
+  if (currentDigits.length >= MAX_COST_DIGITS) {
+    e.preventDefault()
+  }
+}
+
+// ---------- bloqueio explícito de paste com símbolos/letras no custo ----------
+// intercepta o paste manualmente: extrai só os dígitos do que foi colado e insere
+// na posição do cursor, em vez de deixar o navegador colar o texto bruto
+function blockCostPaste(e) {
+  e.preventDefault()
+  const pasted = (e.clipboardData || window.clipboardData).getData('text')
+  const digitsOnly = pasted.replace(/\D/g, '')
+  if (!digitsOnly) return // nada de numérico foi colado: ignora silenciosamente
+
+  const target = e.target
+  const currentDigits = costModel.value.replace(/\D/g, '')
+  const start = target.selectionStart
+  const end = target.selectionEnd
+
+  // remove a seleção atual (se houver) e insere os dígitos colados na posição do cursor
+  const beforeCursorDigits = currentDigits.slice(0, start)
+  const afterCursorDigits = currentDigits.slice(end)
+  const merged = (beforeCursorDigits + digitsOnly + afterCursorDigits).slice(0, MAX_COST_DIGITS)
+
+  costModel.value = merged
+}
+
+// ---------- tradução de erros de validação vindos do Laravel ----------
+const FIELD_LABELS = {
+  description: 'Descrição',
+  revision_date: 'Data da revisão',
+  km: 'KM',
+  cost: 'Custo',
+  next_revision_date: 'Próxima revisão (data)',
+  next_revision_km: 'Próxima revisão (KM)',
+  vehicle_id: 'Veículo',
+}
+
+function translateValidationMessage(field, message) {
+  const label = FIELD_LABELS[field] || field
+
+  if (/must be a date after/i.test(message)) {
+    return `${label}: deve ser uma data posterior à data da revisão atual.`
+  }
+  if (/must be a date after or equal to/i.test(message)) {
+    return `${label}: deve ser uma data igual ou posterior à data da revisão atual.`
+  }
+  if (/must be a valid date|must be a date/i.test(message)) {
+    return `${label}: deve ser uma data válida.`
+  }
+  if (/field is required/i.test(message)) {
+    return `${label}: campo obrigatório.`
+  }
+  if (/must be a number/i.test(message)) {
+    return `${label}: deve ser um número.`
+  }
+  if (/must be at least/i.test(message)) {
+    return `${label}: valor abaixo do mínimo permitido.`
+  }
+  if (/may not be greater than|must not be greater than/i.test(message)) {
+    return `${label}: valor acima do máximo permitido.`
+  }
+  if (/must be greater than/i.test(message)) {
+    return `${label}: deve ser maior que o valor de referência.`
+  }
+
+  // fallback: mantém a mensagem original, mas com o rótulo em português na frente
+  return `${label}: ${message}`
+}
+
+function translateValidationErrors(validationErrors) {
+  return Object.entries(validationErrors)
+    .flatMap(([field, messages]) => messages.map((msg) => translateValidationMessage(field, msg)))
+    .join(' ')
+}
+
+// ---------- comparação de campos alterados (evita update desnecessário) ----------
+function buildComparablePayload() {
+  return {
+    description: formData.description.trim(),
+    revision_date: formData.revision_date,
+    km: formData.km || null,
+    cost: formData.cost ?? 0,
+    next_revision_date: formData.next_revision_date || null,
+    next_revision_km: formData.next_revision_km || null,
+  }
+}
 
 const loadAll = async () => {
   isLoading.value = true
@@ -91,7 +262,8 @@ const toggleForm = (vehicleId) => {
   formMode.value = 'create'
   editingRevisionId.value = null
   formError.value = ''
-  fieldErrors.next_revision_km = ''
+  Object.assign(fieldErrors, emptyFieldErrors())
+  originalSnapshot.value = null
   Object.assign(formData, emptyForm())
 }
 
@@ -102,7 +274,7 @@ const startEdit = (vehicleId, revision) => {
   formMode.value = 'edit'
   editingRevisionId.value = revision.id
   formError.value = ''
-  fieldErrors.next_revision_km = ''
+  Object.assign(fieldErrors, emptyFieldErrors())
   Object.assign(formData, {
     description: revision.description || '',
     revision_date: revision.revision_date ? revision.revision_date.slice(0, 10) : '',
@@ -110,7 +282,7 @@ const startEdit = (vehicleId, revision) => {
     cost:
       revision.cost !== null && revision.cost !== undefined && revision.cost !== ''
         ? Number(revision.cost)
-        : null,
+        : 0,
     next_revision_date: revision.next_revision_date ? revision.next_revision_date.slice(0, 10) : '',
     next_revision_km:
       revision.next_revision_km !== null &&
@@ -119,6 +291,9 @@ const startEdit = (vehicleId, revision) => {
         ? Number(revision.next_revision_km)
         : null,
   })
+
+  // captura o snapshot já normalizado, pra comparar "de igual pra igual" no submit
+  originalSnapshot.value = buildComparablePayload()
 }
 
 const closeForm = () => {
@@ -126,31 +301,48 @@ const closeForm = () => {
   formMode.value = 'create'
   editingRevisionId.value = null
   formError.value = ''
-  fieldErrors.next_revision_km = ''
+  Object.assign(fieldErrors, emptyFieldErrors())
+  originalSnapshot.value = null
 }
 
 const submitRevision = async (vehicle) => {
   formError.value = ''
-  fieldErrors.next_revision_km = ''
+  Object.assign(fieldErrors, emptyFieldErrors())
 
   if (!vehicle?.id) {
     formError.value = 'Veículo inválido (ID não encontrado).'
     return
   }
+
+  let hasError = false
+
   if (!formData.description.trim()) {
-    formError.value = 'Informe uma descrição para a revisão.'
-    return
+    fieldErrors.description = 'Informe uma descrição para a revisão.'
+    hasError = true
   }
   if (!formData.revision_date) {
-    formError.value = 'Informe a data da revisão.'
-    return
+    fieldErrors.revision_date = 'Informe a data em que a revisão atual foi realizada.'
+    hasError = true
   }
+  if (formData.cost === null || formData.cost === undefined || formData.cost === '') {
+    fieldErrors.cost = 'Informe o custo do serviço. Se foi gratuito, informe 0,00.'
+    hasError = true
+  } else if (Number(formData.cost) < 0) {
+    fieldErrors.cost = 'O custo não pode ser negativo.'
+    hasError = true
+  }
+  // alinhado com a regra "after" (estritamente posterior) do backend:
+  // datas iguais também são bloqueadas aqui, evitando ida desnecessária à API.
+  // erro fica preso especificamente ao campo "Data da próxima revisão", não a um banner genérico,
+  // pra não ser confundido com o campo "Data da revisão atual".
   if (
     formData.next_revision_date &&
-    new Date(formData.next_revision_date) < new Date(formData.revision_date)
+    formData.revision_date &&
+    new Date(formData.next_revision_date) <= new Date(formData.revision_date)
   ) {
-    formError.value = 'A próxima revisão não pode ser antes da data da revisão atual.'
-    return
+    fieldErrors.next_revision_date =
+      'A data da próxima revisão deve ser posterior à data da revisão atual (não pode ser igual).'
+    hasError = true
   }
   if (
     formData.next_revision_km !== null &&
@@ -159,23 +351,36 @@ const submitRevision = async (vehicle) => {
     formData.km !== '' &&
     Number(formData.next_revision_km) <= Number(formData.km)
   ) {
-    fieldErrors.next_revision_km = 'Deve ser maior que o KM informado.'
-    return
+    fieldErrors.next_revision_km = 'O KM da próxima revisão deve ser maior que o KM da revisão atual.'
+    hasError = true
   }
 
-  isSubmitting.value = true
-  try {
-    const payload = {
-      vehicle_id: vehicle.id,
-      description: formData.description.trim(),
-      revision_date: formData.revision_date,
-      km: formData.km || null,
-      cost: formData.cost || null,
-      next_revision_date: formData.next_revision_date || null,
-      next_revision_km: formData.next_revision_km || null,
+  if (hasError) return
+
+  // --- modo edição: verifica se algo realmente mudou antes de chamar a API ---
+  if (formMode.value === 'edit' && editingRevisionId.value) {
+    const comparable = buildComparablePayload()
+    const changedFields = {}
+
+    for (const key of Object.keys(comparable)) {
+      if (comparable[key] !== originalSnapshot.value?.[key]) {
+        changedFields[key] = comparable[key]
+      }
     }
 
-    if (formMode.value === 'edit' && editingRevisionId.value) {
+    if (Object.keys(changedFields).length === 0) {
+      toast.info('Nenhuma alteração foi feita.')
+      return
+    }
+
+    isSubmitting.value = true
+    try {
+      // envia o payload COMPLETO (não só os campos alterados). O backend exige alguns
+      // campos como obrigatórios em toda atualização (ex.: revision_date), então mandar
+      // apenas o que mudou fazia a API rejeitar o request mesmo com o campo preenchido na tela.
+      // A checagem "nada mudou" acima já garante que só chegamos aqui se algo mudou de fato,
+      // então enviar tudo aqui não gera updates vazios desnecessários.
+      const payload = { vehicle_id: vehicle.id, ...comparable }
       const rawUpdated = await revisionService.update(editingRevisionId.value, payload)
       const updated = rawUpdated?.data ?? rawUpdated
       const currentList = revisionsByVehicle[vehicle.id] || []
@@ -184,28 +389,45 @@ const submitRevision = async (vehicle) => {
         currentList.splice(idx, 1, { ...currentList[idx], ...updated })
       }
       revisionsByVehicle[vehicle.id] = sortRevisions(currentList)
-    } else {
-      const rawCreated = await revisionService.create(payload)
-      const created = rawCreated?.data ?? rawCreated
-      const currentList = revisionsByVehicle[vehicle.id] || []
-      revisionsByVehicle[vehicle.id] = sortRevisions([created, ...currentList])
+      toast.success('Revisão atualizada com sucesso!')
+      closeForm()
+    } catch (err) {
+      console.error('Erro ao salvar revisão:', err.response?.data ?? err)
+      const validationErrors = err.response?.data?.errors
+      formError.value = validationErrors
+        ? translateValidationErrors(validationErrors)
+        : err.response?.data?.message || err.message || 'Não foi possível salvar a revisão. Tente novamente.'
+    } finally {
+      isSubmitting.value = false
+    }
+    return
+  }
+
+  // --- modo criação: comportamento original, envia tudo ---
+  isSubmitting.value = true
+  try {
+    const payload = {
+      vehicle_id: vehicle.id,
+      description: formData.description.trim(),
+      revision_date: formData.revision_date,
+      km: formData.km || null,
+      cost: formData.cost ?? 0,
+      next_revision_date: formData.next_revision_date || null,
+      next_revision_km: formData.next_revision_km || null,
     }
 
+    const rawCreated = await revisionService.create(payload)
+    const created = rawCreated?.data ?? rawCreated
+    const currentList = revisionsByVehicle[vehicle.id] || []
+    revisionsByVehicle[vehicle.id] = sortRevisions([created, ...currentList])
+    toast.success('Revisão cadastrada com sucesso!')
     closeForm()
   } catch (err) {
-    // Surface the real reason instead of hiding it — Laravel returns 422
-    // with field-level messages when validation fails.
     console.error('Erro ao salvar revisão:', err.response?.data ?? err)
-
     const validationErrors = err.response?.data?.errors
-    if (validationErrors) {
-      formError.value = Object.values(validationErrors).flat().join(' ')
-    } else {
-      formError.value =
-        err.response?.data?.message ||
-        err.message ||
-        'Não foi possível salvar a revisão. Tente novamente.'
-    }
+    formError.value = validationErrors
+      ? translateValidationErrors(validationErrors)
+      : err.response?.data?.message || err.message || 'Não foi possível salvar a revisão. Tente novamente.'
   } finally {
     isSubmitting.value = false
   }
@@ -231,6 +453,7 @@ const confirmDelete = async (vehicleId, revisionId) => {
     if (editingRevisionId.value === revisionId) {
       closeForm()
     }
+    toast.success('Revisão removida com sucesso!')
   } catch (err) {
     console.error('Erro ao excluir revisão:', err.response?.data ?? err)
     deleteErrorByVehicle[vehicleId] =
@@ -280,7 +503,7 @@ onMounted(loadAll)
           </button>
         </div>
 
-        <p v-if="deleteErrorByVehicle[vehicle.id]" class="mb-2 flex items-center gap-1 text-xs text-red-600">
+        <p v-if="deleteErrorByVehicle[vehicle.id]" class="mb-2 flex items-center gap-1 text-xs text-red-600" role="alert">
           <AlertCircle :size="13" />
           {{ deleteErrorByVehicle[vehicle.id] }}
         </p>
@@ -300,69 +523,114 @@ onMounted(loadAll)
             :class="formMode === 'edit' ? 'border-amber-200 bg-amber-50/60' : 'border-brand-200 bg-brand-50/60'"
             @submit.prevent="submitRevision(vehicle)"
           >
-            <p class="mb-3 text-xs font-semibold" :class="formMode === 'edit' ? 'text-amber-700' : 'text-brand-700'">
-              {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
-            </p>
+            <div class="mb-3 flex items-center justify-between">
+              <p class="text-xs font-semibold" :class="formMode === 'edit' ? 'text-amber-700' : 'text-brand-700'">
+                {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
+              </p>
+              <p class="text-[11px] text-ink-400">
+                <span class="text-red-500">*</span> campos obrigatórios
+              </p>
+            </div>
 
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div class="col-span-2 sm:col-span-4">
-                <label class="mb-1 block text-xs font-medium text-ink-600">
-                  Descrição <span class="text-red-500">*</span>
-                </label>
+                <div class="mb-1 flex items-center justify-between">
+                  <label class="text-xs font-medium text-ink-600">
+                    Descrição <span class="text-red-500">*</span>
+                  </label>
+                  <span class="text-[10px] text-ink-300">
+                    {{ formData.description.length }}/{{ DESCRIPTION_MAX_LENGTH }}
+                  </span>
+                </div>
                 <input
                   v-model="formData.description"
                   type="text"
+                  maxlength="150"
                   placeholder="Ex: Troca de óleo e filtros"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1"
+                  :class="fieldErrors.description
+                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
                   autofocus
+                  @input="fieldErrors.description = ''"
                 />
+                <p v-if="fieldErrors.description" class="mt-1 text-[11px] text-red-600" role="alert">
+                  {{ fieldErrors.description }}
+                </p>
               </div>
 
               <div>
                 <label class="mb-1 block text-xs font-medium text-ink-600">
-                  Data <span class="text-red-500">*</span>
+                  Data da revisão atual <span class="text-red-500">*</span>
                 </label>
                 <input
                   v-model="formData.revision_date"
                   type="date"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 focus:outline-none focus:ring-1"
+                  :class="fieldErrors.revision_date
+                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                  @input="fieldErrors.revision_date = ''"
                 />
+                <p v-if="fieldErrors.revision_date" class="mt-1 text-[11px] text-red-600" role="alert">
+                  {{ fieldErrors.revision_date }}
+                </p>
               </div>
 
               <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">KM</label>
+                <label class="mb-1 block text-xs font-medium text-ink-600">KM da revisão atual</label>
                 <input
                   v-model.number="formData.km"
                   type="number"
                   min="0"
                   placeholder="0"
                   class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  @keydown="blockKmOverflow"
                 />
               </div>
 
               <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">Custo (R$)</label>
+                <label class="mb-1 block text-xs font-medium text-ink-600">
+                  Custo (R$) <span class="text-red-500">*</span>
+                </label>
                 <input
-                  v-model.number="formData.cost"
-                  type="number"
-                  min="0"
-                  step="0.01"
+                  v-model="costModel"
+                  type="text"
+                  inputmode="decimal"
                   placeholder="0,00"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1"
+                  :class="fieldErrors.cost
+                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                  @keydown="blockCostOverflow"
+                  @paste="blockCostPaste"
                 />
+                <p v-if="fieldErrors.cost" class="mt-1 text-[11px] text-red-600" role="alert">
+                  {{ fieldErrors.cost }}
+                </p>
+                <p v-else class="mt-1 text-[11px] text-ink-400">
+                  Serviço gratuito? Informe 0,00.
+                </p>
               </div>
 
               <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">Próxima revisão (data)</label>
+                <label class="mb-1 block text-xs font-medium text-ink-600">Data da próxima revisão</label>
                 <input
                   v-model="formData.next_revision_date"
                   type="date"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 focus:outline-none focus:ring-1"
+                  :class="fieldErrors.next_revision_date
+                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                  @input="fieldErrors.next_revision_date = ''"
                 />
+                <p v-if="fieldErrors.next_revision_date" class="mt-1 text-[11px] text-red-600" role="alert">
+                  {{ fieldErrors.next_revision_date }}
+                </p>
               </div>
 
               <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">Próxima revisão (KM)</label>
+                <label class="mb-1 block text-xs font-medium text-ink-600">KM da próxima revisão</label>
                 <input
                   v-model.number="formData.next_revision_km"
                   type="number"
@@ -372,16 +640,17 @@ onMounted(loadAll)
                   :class="fieldErrors.next_revision_km
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                  @keydown="blockKmOverflow"
                   @input="fieldErrors.next_revision_km = ''"
                 />
-                <p v-if="fieldErrors.next_revision_km" class="mt-1 text-[11px] text-red-600">
+                <p v-if="fieldErrors.next_revision_km" class="mt-1 text-[11px] text-red-600" role="alert">
                   {{ fieldErrors.next_revision_km }}
                 </p>
               </div>
             </div>
 
             <div class="mt-3 flex items-center justify-end gap-3 border-t pt-3" :class="formMode === 'edit' ? 'border-amber-100' : 'border-brand-100'">
-              <p v-if="formError" class="mr-auto flex items-center gap-1 text-xs text-red-600">
+              <p v-if="formError" class="mr-auto flex items-center gap-1 text-xs text-red-600" role="alert">
                 <AlertCircle :size="13" />
                 {{ formError }}
               </p>
