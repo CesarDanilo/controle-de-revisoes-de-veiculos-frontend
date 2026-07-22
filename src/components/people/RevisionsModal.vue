@@ -493,18 +493,21 @@ onMounted(loadAll)
       <p class="text-sm text-ink-500">Essa pessoa ainda não tem veículos cadastrados.</p>
     </div>
 
-    <div v-else class="flex max-h-[70vh] flex-col gap-6 overflow-y-auto pr-1">
+    <!-- mobile-first: max-h menor em telas pequenas (menos chrome de teclado/URL bar
+         disputando espaço), cresce a partir do sm -->
+    <div v-else class="flex max-h-[75vh] flex-col gap-6 overflow-y-auto pr-1 sm:max-h-[70vh]">
       <div v-for="vehicle in vehicles" :key="vehicle.id">
-        <div class="mb-2 flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <Car :size="16" class="text-ink-500" />
-            <h3 class="text-sm font-semibold text-ink-900">
+        <!-- Cabeçalho do veículo: empilha em telas muito estreitas, vira linha a partir do sm -->
+        <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div class="flex min-w-0 items-center gap-2">
+            <Car :size="16" class="shrink-0 text-ink-500" />
+            <h3 class="truncate text-sm font-semibold text-ink-900">
               {{ vehicle.model }} · {{ vehicle.license_plate }}
             </h3>
           </div>
           <button
             type="button"
-            class="flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
+            class="flex shrink-0 items-center gap-1 self-start rounded-lg px-2 py-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 sm:self-auto sm:px-0 sm:py-0"
             @click="toggleForm(vehicle.id)"
           >
             <component
@@ -516,7 +519,7 @@ onMounted(loadAll)
         </div>
 
         <p v-if="deleteErrorByVehicle[vehicle.id]" class="mb-2 flex items-center gap-1 text-xs text-red-600" role="alert">
-          <AlertCircle :size="13" />
+          <AlertCircle :size="13" class="shrink-0" />
           {{ deleteErrorByVehicle[vehicle.id] }}
         </p>
 
@@ -531,7 +534,7 @@ onMounted(loadAll)
         >
           <form
             v-if="openFormVehicleId === vehicle.id"
-            class="mb-3 rounded-xl border p-4"
+            class="mb-3 rounded-xl border p-3 sm:p-4"
             :class="formMode === 'edit' ? 'border-amber-200 bg-amber-50/60' : 'border-brand-200 bg-brand-50/60'"
             @submit.prevent="submitRevision(vehicle)"
           >
@@ -540,12 +543,13 @@ onMounted(loadAll)
                 {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
               </p>
               <p class="text-[11px] text-ink-400">
-                <span class="text-red-500">*</span> campos obrigatórios
+                <span class="text-red-500">*</span> obrigatório
               </p>
             </div>
 
-            <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <div class="col-span-2 sm:col-span-4">
+            <!-- mobile-first: 1 coluna por padrão, 2 a partir do sm, 4 a partir do md -->
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+              <div class="sm:col-span-2 md:col-span-4">
                 <div class="mb-1 flex items-center justify-between">
                   <label class="text-xs font-medium text-ink-600">
                     Descrição <span class="text-red-500">*</span>
@@ -559,7 +563,7 @@ onMounted(loadAll)
                   type="text"
                   maxlength="150"
                   placeholder="Ex: Troca de óleo e filtros"
-                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1"
+                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.description
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
@@ -578,7 +582,7 @@ onMounted(loadAll)
                 <input
                   v-model="formData.revision_date"
                   type="date"
-                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 focus:outline-none focus:ring-1"
+                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.revision_date
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
@@ -596,7 +600,7 @@ onMounted(loadAll)
                   type="number"
                   min="0"
                   placeholder="0"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
                   @keydown="blockKmOverflow"
                 />
               </div>
@@ -610,7 +614,7 @@ onMounted(loadAll)
                   type="text"
                   inputmode="decimal"
                   placeholder="0,00"
-                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1"
+                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.cost
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
@@ -630,7 +634,7 @@ onMounted(loadAll)
                 <input
                   v-model="formData.next_revision_date"
                   type="date"
-                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 focus:outline-none focus:ring-1"
+                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.next_revision_date
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
@@ -648,7 +652,7 @@ onMounted(loadAll)
                   type="number"
                   min="0"
                   placeholder="0"
-                  class="w-full rounded-lg border bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1"
+                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.next_revision_km
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
@@ -661,122 +665,217 @@ onMounted(loadAll)
               </div>
             </div>
 
-            <div class="mt-3 flex items-center justify-end gap-3 border-t pt-3" :class="formMode === 'edit' ? 'border-amber-100' : 'border-brand-100'">
-              <p v-if="formError" class="mr-auto flex items-center gap-1 text-xs text-red-600" role="alert">
-                <AlertCircle :size="13" />
+            <!-- Ações do formulário: empilha e ocupa a largura toda no mobile,
+                 vira linha alinhada à direita a partir do sm -->
+            <div
+              class="mt-3 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-end"
+              :class="formMode === 'edit' ? 'border-amber-100' : 'border-brand-100'"
+            >
+              <p v-if="formError" class="flex items-start gap-1 text-xs text-red-600 sm:mr-auto sm:items-center" role="alert">
+                <AlertCircle :size="13" class="mt-0.5 shrink-0 sm:mt-0" />
                 {{ formError }}
               </p>
-              <button
-                type="button"
-                class="rounded-lg px-3 py-1.5 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100"
-                @click="closeForm"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                :disabled="isSubmitting"
-                class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                :class="formMode === 'edit' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-600 hover:bg-brand-700'"
-              >
-                <Loader2 v-if="isSubmitting" :size="13" class="animate-spin" />
-                {{ isSubmitting ? 'Salvando...' : formMode === 'edit' ? 'Salvar alterações' : 'Salvar revisão' }}
-              </button>
+              <div class="flex gap-3 sm:contents">
+                <button
+                  type="button"
+                  class="flex-1 rounded-lg px-3 py-2 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 sm:flex-none sm:py-1.5"
+                  @click="closeForm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  :disabled="isSubmitting"
+                  class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:py-1.5"
+                  :class="formMode === 'edit' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-600 hover:bg-brand-700'"
+                >
+                  <Loader2 v-if="isSubmitting" :size="13" class="animate-spin" />
+                  {{ isSubmitting ? 'Salvando...' : formMode === 'edit' ? 'Salvar alterações' : 'Salvar revisão' }}
+                </button>
+              </div>
             </div>
           </form>
         </Transition>
 
-        <div class="overflow-hidden rounded-xl border border-ink-100">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-ink-50 text-ink-500">
-              <tr>
-                <th class="px-3 py-2 font-medium">Descrição</th>
-                <th class="px-3 py-2 font-medium">Data</th>
-                <th class="px-3 py-2 font-medium">KM</th>
-                <th class="px-3 py-2 font-medium">Custo</th>
-                <th class="px-3 py-2 font-medium">Próxima revisão</th>
-                <th class="px-3 py-2 font-medium text-right">Ações</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-ink-100">
-              <tr v-if="!revisionsByVehicle[vehicle.id]?.length">
-                <td colspan="6" class="px-3 py-4 text-center text-ink-400">
-                  Nenhuma revisão registrada.
-                </td>
-              </tr>
-              <tr
-                v-for="revision in revisionsByVehicle[vehicle.id]"
-                :key="revision.id"
-                class="text-ink-700"
-                :class="editingRevisionId === revision.id ? 'bg-amber-50/50' : ''"
-              >
-                <td class="px-3 py-2">
-                  <div class="flex items-center gap-1.5">
-                    <Wrench :size="12" class="text-ink-400" />
-                    {{ revision.description || '—' }}
-                  </div>
-                </td>
-                <td class="px-3 py-2">{{ formatDate(revision.revision_date) }}</td>
-                <td class="px-3 py-2">{{ revision.km ?? '—' }}</td>
-                <td class="px-3 py-2">{{ formatCurrency(revision.cost) }}</td>
-                <td
-                  class="px-3 py-2"
-                  :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''"
-                >
-                  <div>{{ formatDate(revision.next_revision_date) }}</div>
-                  <div v-if="revision.next_revision_km" class="text-[11px] text-ink-400">
-                    {{ Number(revision.next_revision_km).toLocaleString('pt-BR') }} km
-                  </div>
-                </td>
-                <td class="px-3 py-2">
-                  <div class="flex items-center justify-end gap-1">
-                    <!-- Two-step delete confirmation, no native confirm() -->
-                    <template v-if="confirmingDeleteId === revision.id">
-                      <span class="mr-1 text-[11px] text-ink-500">Excluir?</span>
-                      <button
-                        type="button"
-                        title="Confirmar exclusão"
-                        :disabled="deletingRevisionId === revision.id"
-                        class="rounded-md p-1 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-                        @click="confirmDelete(vehicle.id, revision.id)"
-                      >
-                        <Loader2 v-if="deletingRevisionId === revision.id" :size="14" class="animate-spin" />
-                        <Check v-else :size="14" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Cancelar"
-                        :disabled="deletingRevisionId === revision.id"
-                        class="rounded-md p-1 text-ink-400 transition-colors hover:bg-ink-100 disabled:opacity-50"
-                        @click="cancelDelete"
-                      >
-                        <X :size="14" />
-                      </button>
-                    </template>
-                    <template v-else>
-                      <button
-                        type="button"
-                        title="Editar revisão"
-                        class="rounded-md p-1 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
-                        @click="startEdit(vehicle.id, revision)"
-                      >
-                        <Pencil :size="14" />
-                      </button>
-                      <button
-                        type="button"
-                        title="Excluir revisão"
-                        class="rounded-md p-1 text-ink-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                        @click="askDelete(revision.id)"
-                      >
-                        <Trash2 :size="14" />
-                      </button>
-                    </template>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- Sem revisões: mesma mensagem em ambos os layouts -->
+        <div
+          v-if="!revisionsByVehicle[vehicle.id]?.length"
+          class="rounded-xl border border-ink-100 px-3 py-4 text-center text-xs text-ink-400"
+        >
+          Nenhuma revisão registrada.
         </div>
+
+        <template v-else>
+          <!-- ===== MOBILE (< sm): lista de cards em vez de tabela ===== -->
+          <div class="flex flex-col gap-2 sm:hidden">
+            <div
+              v-for="revision in revisionsByVehicle[vehicle.id]"
+              :key="revision.id"
+              class="rounded-xl border border-ink-100 p-3 text-xs"
+              :class="editingRevisionId === revision.id ? 'bg-amber-50/50' : 'bg-white'"
+            >
+              <div class="mb-2 flex items-start justify-between gap-2">
+                <div class="flex min-w-0 items-center gap-1.5 text-ink-700">
+                  <Wrench :size="12" class="shrink-0 text-ink-400" />
+                  <span class="truncate font-medium">{{ revision.description || '—' }}</span>
+                </div>
+
+                <div class="flex shrink-0 items-center gap-1">
+                  <template v-if="confirmingDeleteId === revision.id">
+                    <span class="mr-0.5 text-[11px] text-ink-500">Excluir?</span>
+                    <button
+                      type="button"
+                      title="Confirmar exclusão"
+                      :disabled="deletingRevisionId === revision.id"
+                      class="rounded-md p-1.5 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                      @click="confirmDelete(vehicle.id, revision.id)"
+                    >
+                      <Loader2 v-if="deletingRevisionId === revision.id" :size="14" class="animate-spin" />
+                      <Check v-else :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Cancelar"
+                      :disabled="deletingRevisionId === revision.id"
+                      class="rounded-md p-1.5 text-ink-400 transition-colors hover:bg-ink-100 disabled:opacity-50"
+                      @click="cancelDelete"
+                    >
+                      <X :size="14" />
+                    </button>
+                  </template>
+                  <template v-else>
+                    <button
+                      type="button"
+                      title="Editar revisão"
+                      class="rounded-md p-1.5 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                      @click="startEdit(vehicle.id, revision)"
+                    >
+                      <Pencil :size="14" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Excluir revisão"
+                      class="rounded-md p-1.5 text-ink-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                      @click="askDelete(revision.id)"
+                    >
+                      <Trash2 :size="14" />
+                    </button>
+                  </template>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-ink-600">
+                <div>
+                  <span class="text-ink-400">Data:</span>
+                  {{ formatDate(revision.revision_date) }}
+                </div>
+                <div>
+                  <span class="text-ink-400">KM:</span>
+                  {{ revision.km ?? '—' }}
+                </div>
+                <div>
+                  <span class="text-ink-400">Custo:</span>
+                  {{ formatCurrency(revision.cost) }}
+                </div>
+                <div :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''">
+                  <span class="text-ink-400" :class="isOverdue(revision.next_revision_date) ? 'text-red-400' : ''">Próxima:</span>
+                  {{ formatDate(revision.next_revision_date) }}
+                  <span v-if="revision.next_revision_km" class="block text-[11px] text-ink-400">
+                    {{ Number(revision.next_revision_km).toLocaleString('pt-BR') }} km
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== DESKTOP (>= sm): tabela original ===== -->
+          <div class="hidden overflow-x-auto rounded-xl border border-ink-100 sm:block">
+            <table class="w-full min-w-[560px] text-left text-xs">
+              <thead class="bg-ink-50 text-ink-500">
+                <tr>
+                  <th class="px-3 py-2 font-medium">Descrição</th>
+                  <th class="px-3 py-2 font-medium">Data</th>
+                  <th class="px-3 py-2 font-medium">KM</th>
+                  <th class="px-3 py-2 font-medium">Custo</th>
+                  <th class="px-3 py-2 font-medium">Próxima revisão</th>
+                  <th class="px-3 py-2 font-medium text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-ink-100">
+                <tr
+                  v-for="revision in revisionsByVehicle[vehicle.id]"
+                  :key="revision.id"
+                  class="text-ink-700"
+                  :class="editingRevisionId === revision.id ? 'bg-amber-50/50' : ''"
+                >
+                  <td class="px-3 py-2">
+                    <div class="flex items-center gap-1.5">
+                      <Wrench :size="12" class="text-ink-400" />
+                      {{ revision.description || '—' }}
+                    </div>
+                  </td>
+                  <td class="px-3 py-2">{{ formatDate(revision.revision_date) }}</td>
+                  <td class="px-3 py-2">{{ revision.km ?? '—' }}</td>
+                  <td class="px-3 py-2">{{ formatCurrency(revision.cost) }}</td>
+                  <td
+                    class="px-3 py-2"
+                    :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''"
+                  >
+                    <div>{{ formatDate(revision.next_revision_date) }}</div>
+                    <div v-if="revision.next_revision_km" class="text-[11px] text-ink-400">
+                      {{ Number(revision.next_revision_km).toLocaleString('pt-BR') }} km
+                    </div>
+                  </td>
+                  <td class="px-3 py-2">
+                    <div class="flex items-center justify-end gap-1">
+                      <!-- Two-step delete confirmation, no native confirm() -->
+                      <template v-if="confirmingDeleteId === revision.id">
+                        <span class="mr-1 text-[11px] text-ink-500">Excluir?</span>
+                        <button
+                          type="button"
+                          title="Confirmar exclusão"
+                          :disabled="deletingRevisionId === revision.id"
+                          class="rounded-md p-1 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+                          @click="confirmDelete(vehicle.id, revision.id)"
+                        >
+                          <Loader2 v-if="deletingRevisionId === revision.id" :size="14" class="animate-spin" />
+                          <Check v-else :size="14" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Cancelar"
+                          :disabled="deletingRevisionId === revision.id"
+                          class="rounded-md p-1 text-ink-400 transition-colors hover:bg-ink-100 disabled:opacity-50"
+                          @click="cancelDelete"
+                        >
+                          <X :size="14" />
+                        </button>
+                      </template>
+                      <template v-else>
+                        <button
+                          type="button"
+                          title="Editar revisão"
+                          class="rounded-md p-1 text-ink-400 transition-colors hover:bg-ink-100 hover:text-ink-700"
+                          @click="startEdit(vehicle.id, revision)"
+                        >
+                          <Pencil :size="14" />
+                        </button>
+                        <button
+                          type="button"
+                          title="Excluir revisão"
+                          class="rounded-md p-1 text-ink-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                          @click="askDelete(revision.id)"
+                        >
+                          <Trash2 :size="14" />
+                        </button>
+                      </template>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
       </div>
     </div>
   </BaseModal>
