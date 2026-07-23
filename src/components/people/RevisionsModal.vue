@@ -88,9 +88,35 @@ const isOverdue = (dateStr) => {
 const sortRevisions = (list) =>
   [...list].sort((a, b) => new Date(b.revision_date) - new Date(a.revision_date))
 
-// ---------- limite de dígitos do KM ----------
+// ---------- máscara de KM com separador de milhar, com limite ----------
 const MAX_KM_DIGITS = 7 // permite até 9.999.999 km
 
+const formatKmDigits = (digits) => {
+  if (!digits) return ''
+  return Number(digits).toLocaleString('pt-BR')
+}
+
+// factory: gera um computed get/set de KM ligado a uma chave específica do formData
+// (evita duplicar a mesma lógica pro KM atual e pro KM da próxima revisão)
+function makeKmModel(fieldKey) {
+  return computed({
+    get() {
+      const value = formData[fieldKey]
+      if (value === null || value === undefined || value === '') return ''
+      return formatKmDigits(String(value))
+    },
+    set(val) {
+      if (fieldErrors[fieldKey] !== undefined) fieldErrors[fieldKey] = ''
+      const digits = val.replace(/\D/g, '').slice(0, MAX_KM_DIGITS)
+      formData[fieldKey] = digits ? Number(digits) : null
+    },
+  })
+}
+
+const kmModel = makeKmModel('km')
+const nextRevisionKmModel = makeKmModel('next_revision_km')
+
+// ---------- bloqueio de digitação ao atingir o limite do KM ----------
 function blockKmOverflow(e) {
   const controlKeys = [
     'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
@@ -98,16 +124,46 @@ function blockKmOverflow(e) {
   ]
   if (controlKeys.includes(e.key)) return
   if (e.ctrlKey || e.metaKey) return
-  if (!/^\d$/.test(e.key)) return // deixa o navegador barrar não-dígito (type=number já ajuda)
+
+  // campo é só de dígitos (o ponto de milhar é automático) — bloqueia letra/símbolo
+  if (!/^\d$/.test(e.key)) {
+    e.preventDefault()
+    return
+  }
 
   const target = e.target
   const hasSelection = target.selectionStart !== target.selectionEnd
   if (hasSelection) return
 
-  if (target.value.length >= MAX_KM_DIGITS) {
+  const currentDigits = target.value.replace(/\D/g, '')
+  if (currentDigits.length >= MAX_KM_DIGITS) {
     e.preventDefault()
   }
 }
+
+// ---------- bloqueio explícito de paste com símbolos/letras no KM ----------
+function makeBlockKmPaste(kmModelRef) {
+  return function (e) {
+    e.preventDefault()
+    const pasted = (e.clipboardData || window.clipboardData).getData('text')
+    const digitsOnly = pasted.replace(/\D/g, '')
+    if (!digitsOnly) return
+
+    const target = e.target
+    const currentDigits = kmModelRef.value.replace(/\D/g, '')
+    const start = target.selectionStart
+    const end = target.selectionEnd
+
+    const beforeCursorDigits = currentDigits.slice(0, start)
+    const afterCursorDigits = currentDigits.slice(end)
+    const merged = (beforeCursorDigits + digitsOnly + afterCursorDigits).slice(0, MAX_KM_DIGITS)
+
+    kmModelRef.value = merged
+  }
+}
+
+const blockKmPaste = makeBlockKmPaste(kmModel)
+const blockNextRevisionKmPaste = makeBlockKmPaste(nextRevisionKmModel)
 
 // ---------- máscara de moeda para o custo, com limite ----------
 // digita "1590" -> mostra "15,90" (preenche da direita, como caixa eletrônico)
@@ -596,12 +652,13 @@ onMounted(loadAll)
               <div>
                 <label class="mb-1 block text-xs font-medium text-ink-600">KM da revisão atual</label>
                 <input
-                  v-model.number="formData.km"
-                  type="number"
-                  min="0"
+                  v-model="kmModel"
+                  type="text"
+                  inputmode="numeric"
                   placeholder="0"
                   class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
                   @keydown="blockKmOverflow"
+                  @paste="blockKmPaste"
                 />
               </div>
 
@@ -648,16 +705,16 @@ onMounted(loadAll)
               <div>
                 <label class="mb-1 block text-xs font-medium text-ink-600">KM da próxima revisão</label>
                 <input
-                  v-model.number="formData.next_revision_km"
-                  type="number"
-                  min="0"
+                  v-model="nextRevisionKmModel"
+                  type="text"
+                  inputmode="numeric"
                   placeholder="0"
                   class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.next_revision_km
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
                   @keydown="blockKmOverflow"
-                  @input="fieldErrors.next_revision_km = ''"
+                  @paste="blockNextRevisionKmPaste"
                 />
                 <p v-if="fieldErrors.next_revision_km" class="mt-1 text-[11px] text-red-600" role="alert">
                   {{ fieldErrors.next_revision_km }}
@@ -771,7 +828,7 @@ onMounted(loadAll)
                 </div>
                 <div>
                   <span class="text-ink-400">KM:</span>
-                  {{ revision.km ?? '—' }}
+                  {{ revision.km ? Number(revision.km).toLocaleString('pt-BR') : '—' }}
                 </div>
                 <div>
                   <span class="text-ink-400">Custo:</span>
@@ -815,7 +872,7 @@ onMounted(loadAll)
                     </div>
                   </td>
                   <td class="px-3 py-2">{{ formatDate(revision.revision_date) }}</td>
-                  <td class="px-3 py-2">{{ revision.km ?? '—' }}</td>
+                  <td class="px-3 py-2">{{ revision.km ? Number(revision.km).toLocaleString('pt-BR') : '—' }}</td>
                   <td class="px-3 py-2">{{ formatCurrency(revision.cost) }}</td>
                   <td
                     class="px-3 py-2"
