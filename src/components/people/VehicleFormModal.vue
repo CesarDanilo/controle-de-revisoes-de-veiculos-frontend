@@ -267,6 +267,82 @@ const handleModelPaste = (event) => {
   const newValue = form.model.slice(0, start) + pasted + form.model.slice(end)
   form.model = newValue.slice(0, MODEL_MAX_LENGTH)
 }
+
+const LICENSE_PLATE_MAX_LENGTH = 7
+
+const isLetter = (char) => /^[A-Za-z]$/.test(char)
+const isDigit = (char) => /^[0-9]$/.test(char)
+
+// define o tipo de caractere aceito em cada posição da placa
+const licensePlateCharAllowed = (position, char) => {
+  if (position <= 2) return isLetter(char) // ABC
+  if (position === 3) return isDigit(char) // 1
+  if (position === 4) return isLetter(char) || isDigit(char) // D (Mercosul) ou 2 (antigo)
+  return isDigit(char) // 23
+}
+
+// filtra e formata um valor completo (usado no v-model e no paste)
+const formatLicensePlate = (value) => {
+  const upper = value.toUpperCase()
+  let result = ''
+  for (let i = 0; i < upper.length && result.length < LICENSE_PLATE_MAX_LENGTH; i++) {
+    const char = upper[i]
+    if (licensePlateCharAllowed(result.length, char)) {
+      result += char
+    }
+  }
+  return result
+}
+
+const licensePlateValue = computed({
+  get: () => form.license_plate,
+  set: (value) => {
+    form.license_plate = formatLicensePlate(value)
+  },
+})
+
+const handleLicensePlateKeydown = (event) => {
+  const allowedKeys = [
+    'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End',
+    'Enter', 'Escape',
+  ]
+
+  if (event.ctrlKey || event.metaKey || allowedKeys.includes(event.key)) {
+    return
+  }
+
+  // ignora teclas especiais (Shift, CapsLock, F1 etc.)
+  if (event.key.length !== 1) {
+    return
+  }
+
+  const input = event.target
+  const hasSelection = input.selectionStart !== input.selectionEnd
+
+  // já está no limite e não há seleção pra substituir: bloqueia
+  if (form.license_plate.length >= LICENSE_PLATE_MAX_LENGTH && !hasSelection) {
+    event.preventDefault()
+    return
+  }
+
+  // bloqueia se o caractere não é do tipo esperado pra posição atual
+  const caretPosition = input.selectionStart
+  if (!licensePlateCharAllowed(caretPosition, event.key)) {
+    event.preventDefault()
+  }
+}
+
+const handleLicensePlatePaste = (event) => {
+  event.preventDefault()
+  const pasted = (event.clipboardData || window.clipboardData).getData('text')
+  const input = event.target
+  const start = input.selectionStart
+  const end = input.selectionEnd
+
+  const newValue = form.license_plate.slice(0, start) + pasted + form.license_plate.slice(end)
+  form.license_plate = formatLicensePlate(newValue)
+}
 </script>
 
 <template>
@@ -437,7 +513,15 @@ const handleModelPaste = (event) => {
           </div>
 
           <div class="flex flex-col gap-1.5">
-            <BaseInput v-model="form.license_plate" label="Placa" :icon="Hash" placeholder="ABC1D23" />
+            <BaseInput
+              v-model="licensePlateValue"
+              label="Placa"
+              :icon="Hash"
+              placeholder="ABC1234 ou ABC1D23"
+              maxlength="7"
+              @keydown="handleLicensePlateKeydown"
+              @paste="handleLicensePlatePaste"
+            />
             <span v-if="fieldErrors.license_plate" class="text-xs text-red-600">{{ fieldErrors.license_plate[0] }}</span>
           </div>
 
