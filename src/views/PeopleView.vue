@@ -163,6 +163,13 @@ const closeRevisionsModal = () => {
   personForRevisions.value = null
 }
 
+// Fecha o modal de revisões e abre o de veículo para a mesma pessoa
+const goToVehicleRegistrationFromRevisions = () => {
+  const person = personForRevisions.value
+  closeRevisionsModal()
+  openVehicleModal(person)
+}
+
 const sanitizeNumericFilter = (field) => {
   filters.value[field] = filters.value[field].replace(/\D/g, '').slice(0, 11)
 }
@@ -438,7 +445,7 @@ const sanitizeNumericFilter = (field) => {
       v-if="isRevisionsModalOpen"
       :person="personForRevisions"
       @close="closeRevisionsModal"
-      @register-vehicle="openVehicleModal(personForRevisions)"
+      @register-vehicle="goToVehicleRegistrationFromRevisions"
     />
   </AppShell>
 </template>
