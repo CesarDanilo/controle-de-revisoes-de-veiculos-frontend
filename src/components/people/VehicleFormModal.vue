@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { Car, Palette, Calendar, Hash, Plus, X, Pencil, Trash2, Tag } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
@@ -45,6 +45,7 @@ const isSubmitting = ref(false)
 const isCreatingBrand = ref(false)
 const newBrandName = ref('')
 const isSavingBrand = ref(false)
+const newBrandInputRef = ref(null)
 
 const isConfirmOpen = ref(false)
 const vehicleToDelete = ref(null)
@@ -53,6 +54,14 @@ const isDeleting = ref(false)
 const isEditing = computed(() => editingVehicleId.value !== null)
 
 const brandName = (brandId) => brands.value.find((b) => b.id === brandId)?.name ?? '—'
+
+// getter/setter com bloqueio real de caracteres (não só maxlength visual)
+const modelValue = computed({
+  get: () => form.model,
+  set: (value) => {
+    form.model = value.slice(0, 40)
+  },
+})
 
 onMounted(async () => {
   isLoadingBrands.value = true
@@ -106,9 +115,11 @@ const getChangedFields = (validatedData) => {
   return changed
 }
 
-const openBrandCreation = () => {
+const openBrandCreation = async () => {
   isCreatingBrand.value = true
   newBrandName.value = ''
+  await nextTick()
+  newBrandInputRef.value?.focus()
 }
 
 const cancelBrandCreation = () => {
@@ -222,6 +233,40 @@ const confirmDeleteVehicle = async () => {
     isDeleting.value = false
   }
 }
+
+const MODEL_MAX_LENGTH = 40
+
+const handleModelKeydown = (event) => {
+  const allowedKeys = [
+    'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End',
+    'Enter', 'Escape',
+  ]
+
+  // permite atalhos (ctrl/cmd + a/c/v/x) e teclas de navegação
+  if (event.ctrlKey || event.metaKey || allowedKeys.includes(event.key)) {
+    return
+  }
+
+  const input = event.target
+  const hasSelection = input.selectionStart !== input.selectionEnd
+
+  // se já está no limite e não há seleção pra substituir, bloqueia a tecla
+  if (form.model.length >= MODEL_MAX_LENGTH && !hasSelection) {
+    event.preventDefault()
+  }
+}
+
+const handleModelPaste = (event) => {
+  event.preventDefault()
+  const pasted = (event.clipboardData || window.clipboardData).getData('text')
+  const input = event.target
+  const start = input.selectionStart
+  const end = input.selectionEnd
+
+  const newValue = form.model.slice(0, start) + pasted + form.model.slice(end)
+  form.model = newValue.slice(0, MODEL_MAX_LENGTH)
+}
 </script>
 
 <template>
@@ -232,14 +277,6 @@ const confirmDeleteVehicle = async () => {
           <h3 class="text-sm font-semibold text-ink-700">
             {{ isLoadingVehicles ? 'Carregando...' : `${vehicles.length} veículo(s)` }}
           </h3>
-          <button
-            type="button"
-            class="flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
-            @click="resetForm"
-          >
-            <Plus :size="14" />
-            Novo veículo
-          </button>
         </div>
 
         <div v-if="isLoadingVehicles" class="py-8 text-center text-sm text-ink-500">
@@ -329,6 +366,7 @@ const confirmDeleteVehicle = async () => {
 
             <div v-else class="flex items-center gap-2">
               <input
+                ref="newBrandInputRef"
                 v-model="newBrandName"
                 type="text"
                 placeholder="Nome da marca"
@@ -359,11 +397,13 @@ const confirmDeleteVehicle = async () => {
 
           <div class="flex flex-col gap-1.5">
             <BaseInput
-              v-model="form.model"
+              v-model="modelValue"
               label="Modelo"
               :icon="Car"
               placeholder="Ex: Civic"
               maxlength="40"
+              @keydown="handleModelKeydown"
+              @paste="handleModelPaste"
             />
             <span v-if="fieldErrors.model" class="text-xs text-red-600">{{ fieldErrors.model[0] }}</span>
           </div>
