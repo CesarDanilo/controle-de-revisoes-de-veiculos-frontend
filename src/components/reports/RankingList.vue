@@ -26,8 +26,8 @@ const expand = () => {
 
 // Top 3 ganham selo de destaque — reforça hierarquia sem depender só de cor
 const RANK_BADGE = [
-  'bg-amber-100 text-amber-700',
-  'bg-ink-200 text-ink-600',
+  'bg-orange-100 text-orange-700',
+  'bg-orange-100 text-orange-700',
   'bg-orange-100 text-orange-700',
 ]
 </script>
