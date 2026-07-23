@@ -29,6 +29,8 @@ const emptyForm = () => ({
 
 const form = reactive(emptyForm())
 const editingVehicleId = ref(null)
+
+// snapshot normalizado do veículo original (usado pra detectar o que mudou)
 const originalSnapshot = ref(null)
 
 const vehicles = ref([])
@@ -49,14 +51,11 @@ const isConfirmOpen = ref(false)
 const vehicleToDelete = ref(null)
 const isDeleting = ref(false)
 
-// 👇 novas refs pra rolagem/foco no formulário
-const formSectionRef = ref(null)
-const brandSelectRef = ref(null)
-
 const isEditing = computed(() => editingVehicleId.value !== null)
 
 const brandName = (brandId) => brands.value.find((b) => b.id === brandId)?.name ?? '—'
 
+// getter/setter com bloqueio real de caracteres (não só maxlength visual)
 const modelValue = computed({
   get: () => form.model,
   set: (value) => {
@@ -80,13 +79,6 @@ onMounted(async () => {
   }
 })
 
-// 👇 nova função: rola até o formulário e foca no select de marca
-const scrollToForm = async () => {
-  await nextTick()
-  formSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  brandSelectRef.value?.focus()
-}
-
 const resetForm = () => {
   Object.assign(form, emptyForm())
   editingVehicleId.value = null
@@ -104,16 +96,18 @@ const selectForEdit = (vehicle) => {
   editingVehicleId.value = vehicle.id
   fieldErrors.value = {}
 
+  // normaliza o estado original pelo mesmo schema, pra comparar "de igual pra igual" depois
   const parsed = vehicleSchema.safeParse(form)
   originalSnapshot.value = parsed.success ? parsed.data : null
 }
 
+// retorna só as chaves que mudaram entre o snapshot original e os dados validados atuais
 const getChangedFields = (validatedData) => {
-  if (!originalSnapshot.value) return validatedData
+  if (!originalSnapshot.value) return validatedData // fallback: sem snapshot, envia tudo
 
   const changed = {}
   for (const key of Object.keys(validatedData)) {
-    if (key === 'people_id') continue
+    if (key === 'people_id') continue // nunca muda durante a edição, ignora na comparação
     if (validatedData[key] !== originalSnapshot.value[key]) {
       changed[key] = validatedData[key]
     }
@@ -162,6 +156,7 @@ const handleSubmit = async () => {
 
   fieldErrors.value = {}
 
+  // --- modo edição: verifica se algo realmente mudou antes de chamar a API ---
   if (isEditing.value) {
     const changedFields = getChangedFields(result.data)
 
@@ -171,6 +166,7 @@ const handleSubmit = async () => {
     }
 
     isSubmitting.value = true
+    // se "year" estiver entre os campos alterados, converte pra number antes de enviar
     const payload = 'year' in changedFields
       ? { ...changedFields, year: Number(changedFields.year) }
       : changedFields
@@ -190,6 +186,7 @@ const handleSubmit = async () => {
     return
   }
 
+  // --- modo criação: comportamento original, envia tudo ---
   isSubmitting.value = true
   const payload = { ...result.data, year: Number(result.data.year) }
 
@@ -246,6 +243,7 @@ const handleModelKeydown = (event) => {
     'Enter', 'Escape',
   ]
 
+  // permite atalhos (ctrl/cmd + a/c/v/x) e teclas de navegação
   if (event.ctrlKey || event.metaKey || allowedKeys.includes(event.key)) {
     return
   }
@@ -253,6 +251,7 @@ const handleModelKeydown = (event) => {
   const input = event.target
   const hasSelection = input.selectionStart !== input.selectionEnd
 
+  // se já está no limite e não há seleção pra substituir, bloqueia a tecla
   if (form.model.length >= MODEL_MAX_LENGTH && !hasSelection) {
     event.preventDefault()
   }
@@ -274,13 +273,15 @@ const LICENSE_PLATE_MAX_LENGTH = 7
 const isLetter = (char) => /^[A-Za-z]$/.test(char)
 const isDigit = (char) => /^[0-9]$/.test(char)
 
+// define o tipo de caractere aceito em cada posição da placa
 const licensePlateCharAllowed = (position, char) => {
-  if (position <= 2) return isLetter(char)
-  if (position === 3) return isDigit(char)
-  if (position === 4) return isLetter(char) || isDigit(char)
-  return isDigit(char)
+  if (position <= 2) return isLetter(char) // ABC
+  if (position === 3) return isDigit(char) // 1
+  if (position === 4) return isLetter(char) || isDigit(char) // D (Mercosul) ou 2 (antigo)
+  return isDigit(char) // 23
 }
 
+// filtra e formata um valor completo (usado no v-model e no paste)
 const formatLicensePlate = (value) => {
   const upper = value.toUpperCase()
   let result = ''
@@ -311,6 +312,7 @@ const handleLicensePlateKeydown = (event) => {
     return
   }
 
+  // ignora teclas especiais (Shift, CapsLock, F1 etc.)
   if (event.key.length !== 1) {
     return
   }
@@ -318,11 +320,13 @@ const handleLicensePlateKeydown = (event) => {
   const input = event.target
   const hasSelection = input.selectionStart !== input.selectionEnd
 
+  // já está no limite e não há seleção pra substituir: bloqueia
   if (form.license_plate.length >= LICENSE_PLATE_MAX_LENGTH && !hasSelection) {
     event.preventDefault()
     return
   }
 
+  // bloqueia se o caractere não é do tipo esperado pra posição atual
   const caretPosition = input.selectionStart
   if (!licensePlateCharAllowed(caretPosition, event.key)) {
     event.preventDefault()
@@ -357,14 +361,10 @@ const handleLicensePlatePaste = (event) => {
 
         <div
           v-else-if="!vehicles.length"
-          class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-surface-border py-8 text-center"
+          class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-surface-border py-8 text-center"
         >
           <Car :size="24" class="text-ink-300" />
           <p class="text-sm text-ink-500">Nenhum veículo cadastrado ainda.</p>
-          <BaseButton type="button" size="sm" @click="scrollToForm">
-            <Plus :size="14" />
-            Cadastrar veículo
-          </BaseButton>
         </div>
 
         <div v-else class="flex max-h-80 flex-col gap-2 overflow-y-auto pr-1">
@@ -405,10 +405,7 @@ const handleLicensePlatePaste = (event) => {
         </div>
       </div>
 
-      <div
-        ref="formSectionRef"
-        class="flex flex-col gap-4 border-t border-surface-border pt-6 md:border-l md:border-t-0 md:pl-6 md:pt-0"
-      >
+      <div class="flex flex-col gap-4 border-t border-surface-border pt-6 md:border-l md:border-t-0 md:pl-6 md:pt-0">
         <div class="flex items-center gap-2">
           <Tag :size="14" class="text-brand-600" />
           <h3 class="text-sm font-semibold text-ink-700">
@@ -433,7 +430,6 @@ const handleLicensePlatePaste = (event) => {
 
             <select
               v-if="!isCreatingBrand"
-              ref="brandSelectRef"
               v-model="form.brand_id"
               class="rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
               :disabled="isLoadingBrands"
