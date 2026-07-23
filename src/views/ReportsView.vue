@@ -16,8 +16,20 @@ import UpcomingRevisionsPanel from '../components/reports/UpcomingRevisionsPanel
 import { useReports } from '../composables/useReports'
 import { maskPhone } from '../utils/masks'
 
-const { data, isLoading, errorMessage, fetchVehicleReports, fetchPeopleReports, fetchRevisionReports } =
-  useReports()
+const {
+  data,
+  pagination,
+  tableLoading,
+  isLoading,
+  errorMessage,
+  fetchVehicleReports,
+  fetchPeopleReports,
+  fetchRevisionReports,
+  fetchVehiclesByPerson,
+  fetchAllPeople,
+  fetchRevisionsByPeriod,
+  fetchAvgIntervalByPerson,
+} = useReports()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
 const formatDateBR = (value) => {
@@ -37,8 +49,6 @@ const toISODate = (date) => {
 }
 
 // ---- Rótulo de gênero com 3 categorias (M / F / Outros) ----
-// Antes o código assumia só M/F com um ternário, o que jogava qualquer
-// valor diferente de 'M' (incluindo "Outros") dentro do rótulo "Mulheres".
 const GENDER_LABELS = { M: 'Homens', F: 'Mulheres' }
 const genderLabel = (code) => GENDER_LABELS[code] || 'Outros'
 const GENDER_COLORS = { M: '#6366f1', F: '#f472b6' }
@@ -69,12 +79,14 @@ const applyPreset = (preset) => {
 
   periodStart.value = toISODate(start)
   periodEnd.value = toISODate(end)
-  fetchRevisionReports(periodStart.value, periodEnd.value)
+  // Só a tabela de revisões do período depende do filtro de datas —
+  // rankings e intervalo médio são "todos os períodos", não precisam recarregar.
+  fetchRevisionsByPeriod(periodStart.value, periodEnd.value, 1)
 }
 
 const applyCustomPeriod = () => {
   activePreset.value = 'custom'
-  fetchRevisionReports(periodStart.value, periodEnd.value)
+  fetchRevisionsByPeriod(periodStart.value, periodEnd.value, 1)
 }
 
 // ---------------------------------------------------------------------
@@ -94,11 +106,18 @@ const loadAll = async () => {
   ])
 }
 
-onMounted(loadAll)
-
 const hasAnyData = computed(
   () => data.value.allVehicles.length || data.value.allPeople.length
 )
+
+// ---------------------------------------------------------------------
+// PAGINAÇÃO — handlers de troca de página por tabela
+// ---------------------------------------------------------------------
+const handleVehiclesByPersonPage = (page) => fetchVehiclesByPerson(page)
+const handleAllPeoplePage = (page) => fetchAllPeople(page)
+const handleRevisionsByPeriodPage = (page) =>
+  fetchRevisionsByPeriod(periodStart.value, periodEnd.value, page)
+const handleAvgIntervalPage = (page) => fetchAvgIntervalByPerson(page)
 
 // ---------------------------------------------------------------------
 // KPIs
@@ -166,7 +185,7 @@ const allPeopleFormatted = computed(() =>
 )
 
 // ---------------------------------------------------------------------
-// GRÁFICOS — agora com 3 categorias de gênero
+// GRÁFICOS — 3 categorias de gênero
 // ---------------------------------------------------------------------
 const vehiclesByGenderChart = computed(() => ({
   labels: data.value.vehiclesByGender.map((g) => genderLabel(g.gender)),
@@ -195,8 +214,6 @@ const brandsByGenderChart = computed(() => ({
   ],
 }))
 
-// Rankings — "Marcas mais cadastradas" removido (não faz sentido pra
-// contas individuais, cada cliente cadastra poucas marcas próprias)
 const brandsRevisionItems = computed(() =>
   data.value.brandsRevisionRanking.map((b) => ({ label: b.brand, value: b.count }))
 )
@@ -213,6 +230,8 @@ const detailTabs = [
   { key: 'people', label: 'Pessoas', icon: Users },
 ]
 const activeDetailTab = ref('revisions')
+
+onMounted(loadAll)
 </script>
 
 <template>
@@ -278,8 +297,6 @@ const activeDetailTab = ref('revisions')
       </div>
 
       <!-- ====== KPIs ====== -->
-      <!-- grid mais gradual (1 -> 2 -> 3 -> 6 colunas) pra dar mais largura
-           ao card em telas pequenas, complementando o fix de truncate -->
       <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
         <KpiCard label="Revisões" :value="kpiTotalRevisoes" :icon="Wrench" accent="brand" :loading="isLoading" />
         <KpiCard label="Veículos atendidos" :value="kpiVeiculosAtendidos" :icon="Car" accent="neutral" :loading="isLoading" />
@@ -296,7 +313,7 @@ const activeDetailTab = ref('revisions')
         <KpiCard label="Ticket médio" :value="formatCurrency(kpiTicketMedio)" :icon="Receipt" accent="brand" :loading="isLoading" />
       </div>
 
-      <!-- ====== RANKINGS (sem "marcas mais cadastradas") ====== -->
+      <!-- ====== RANKINGS ====== -->
       <div class="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ReportPanel title="Marcas com mais revisões" description="Todos os períodos">
           <RankingList :items="brandsRevisionItems" accent-class="bg-green-500" />
@@ -362,6 +379,9 @@ const activeDetailTab = ref('revisions')
               { key: 'avg_days', label: 'Média (dias)' },
             ]"
             :rows="data.avgIntervalByPerson"
+            :pagination="pagination.avgIntervalByPerson"
+            :loading="tableLoading.avgIntervalByPerson"
+            @page-change="handleAvgIntervalPage"
           />
         </ReportPanel>
 
@@ -378,6 +398,9 @@ const activeDetailTab = ref('revisions')
               { key: 'description', label: 'Descrição' },
             ]"
             :rows="revisionsByPeriodFormatted"
+            :pagination="pagination.revisionsByPeriod"
+            :loading="tableLoading.revisionsByPeriod"
+            @page-change="handleRevisionsByPeriodPage"
           />
         </ReportPanel>
       </div>
@@ -391,6 +414,9 @@ const activeDetailTab = ref('revisions')
             { key: 'brand', label: 'Marca' },
           ]"
           :rows="data.vehiclesByPerson"
+          :pagination="pagination.vehiclesByPerson"
+          :loading="tableLoading.vehiclesByPerson"
+          @page-change="handleVehiclesByPersonPage"
         />
       </ReportPanel>
 
@@ -402,6 +428,9 @@ const activeDetailTab = ref('revisions')
             { key: 'phone', label: 'Telefone' },
           ]"
           :rows="allPeopleFormatted"
+          :pagination="pagination.allPeople"
+          :loading="tableLoading.allPeople"
+          @page-change="handleAllPeoplePage"
         />
       </ReportPanel>
     </template>
