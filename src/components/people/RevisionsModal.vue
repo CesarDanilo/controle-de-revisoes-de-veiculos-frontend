@@ -10,7 +10,7 @@ const props = defineProps({
   person: { type: Object, required: true },
 })
 
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'register-vehicle'])
 
 const toast = useToast()
 
@@ -56,11 +56,6 @@ const deletingRevisionId = ref(null)
 const deleteErrorByVehicle = reactive({})
 
 // ---------- formatação de data (FIX timezone) ----------
-// Antes: new Date(dateStr).toLocaleDateString('pt-BR')
-// Problema: new Date('2026-07-22') é interpretado como 2026-07-22T00:00:00Z (UTC).
-// Ao converter pro horário local (Brasil = UTC-3), meia-noite UTC vira 21h do dia
-// ANTERIOR, e o toLocaleDateString mostrava a data errada (um dia a menos).
-// Correção: extrai ano/mês/dia direto da string, sem nunca criar um objeto Date.
 const formatDate = (dateStr) => {
   if (!dateStr) return '—'
   const isoPart = String(dateStr).slice(0, 10)
@@ -76,9 +71,6 @@ const formatCurrency = (value) => {
 }
 
 // ---------- isOverdue (FIX timezone) ----------
-// Mesmo problema do formatDate: new Date(dateStr) fica em meia-noite UTC, enquanto
-// "today" é meia-noite local. Isso podia marcar uma revisão de HOJE como atrasada.
-// Correção: compara strings yyyy-mm-dd diretamente, sem criar Date a partir do ISO.
 const isOverdue = (dateStr) => {
   if (!dateStr) return false
   const todayISO = new Date().toLocaleDateString('sv-SE') // yyyy-mm-dd no fuso local
@@ -96,8 +88,6 @@ const formatKmDigits = (digits) => {
   return Number(digits).toLocaleString('pt-BR')
 }
 
-// factory: gera um computed get/set de KM ligado a uma chave específica do formData
-// (evita duplicar a mesma lógica pro KM atual e pro KM da próxima revisão)
 function makeKmModel(fieldKey) {
   return computed({
     get() {
@@ -116,7 +106,6 @@ function makeKmModel(fieldKey) {
 const kmModel = makeKmModel('km')
 const nextRevisionKmModel = makeKmModel('next_revision_km')
 
-// ---------- bloqueio de digitação ao atingir o limite do KM ----------
 function blockKmOverflow(e) {
   const controlKeys = [
     'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
@@ -125,7 +114,6 @@ function blockKmOverflow(e) {
   if (controlKeys.includes(e.key)) return
   if (e.ctrlKey || e.metaKey) return
 
-  // campo é só de dígitos (o ponto de milhar é automático) — bloqueia letra/símbolo
   if (!/^\d$/.test(e.key)) {
     e.preventDefault()
     return
@@ -141,7 +129,6 @@ function blockKmOverflow(e) {
   }
 }
 
-// ---------- bloqueio explícito de paste com símbolos/letras no KM ----------
 function makeBlockKmPaste(kmModelRef) {
   return function (e) {
     e.preventDefault()
@@ -166,7 +153,6 @@ const blockKmPaste = makeBlockKmPaste(kmModel)
 const blockNextRevisionKmPaste = makeBlockKmPaste(nextRevisionKmModel)
 
 // ---------- máscara de moeda para o custo, com limite ----------
-// digita "1590" -> mostra "15,90" (preenche da direita, como caixa eletrônico)
 const MAX_COST_DIGITS = 8 // até R$ 999.999,99 — ajuste conforme a realidade do seu negócio
 
 const costModel = computed({
@@ -181,7 +167,6 @@ const costModel = computed({
     fieldErrors.cost = ''
     const digits = val.replace(/\D/g, '').slice(0, MAX_COST_DIGITS)
     if (!digits) {
-      // campo limpo pelo usuário: fica temporariamente vazio até o submit validar
       formData.cost = null
       return
     }
@@ -189,7 +174,6 @@ const costModel = computed({
   },
 })
 
-// ---------- bloqueio de digitação ao atingir o limite do custo ----------
 function blockCostOverflow(e) {
   const controlKeys = [
     'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
@@ -198,7 +182,6 @@ function blockCostOverflow(e) {
   if (controlKeys.includes(e.key)) return
   if (e.ctrlKey || e.metaKey) return
 
-  // campo é só de dígitos (a formatação de vírgula/ponto é automática) — bloqueia letra/símbolo
   if (!/^\d$/.test(e.key)) {
     e.preventDefault()
     return
@@ -214,21 +197,17 @@ function blockCostOverflow(e) {
   }
 }
 
-// ---------- bloqueio explícito de paste com símbolos/letras no custo ----------
-// intercepta o paste manualmente: extrai só os dígitos do que foi colado e insere
-// na posição do cursor, em vez de deixar o navegador colar o texto bruto
 function blockCostPaste(e) {
   e.preventDefault()
   const pasted = (e.clipboardData || window.clipboardData).getData('text')
   const digitsOnly = pasted.replace(/\D/g, '')
-  if (!digitsOnly) return // nada de numérico foi colado: ignora silenciosamente
+  if (!digitsOnly) return
 
   const target = e.target
   const currentDigits = costModel.value.replace(/\D/g, '')
   const start = target.selectionStart
   const end = target.selectionEnd
 
-  // remove a seleção atual (se houver) e insere os dígitos colados na posição do cursor
   const beforeCursorDigits = currentDigits.slice(0, start)
   const afterCursorDigits = currentDigits.slice(end)
   const merged = (beforeCursorDigits + digitsOnly + afterCursorDigits).slice(0, MAX_COST_DIGITS)
@@ -275,7 +254,6 @@ function translateValidationMessage(field, message) {
     return `${label}: deve ser maior que o valor de referência.`
   }
 
-  // fallback: mantém a mensagem original, mas com o rótulo em português na frente
   return `${label}: ${message}`
 }
 
@@ -360,7 +338,6 @@ const startEdit = (vehicleId, revision) => {
         : null,
   })
 
-  // captura o snapshot já normalizado, pra comparar "de igual pra igual" no submit
   originalSnapshot.value = buildComparablePayload()
 }
 
@@ -399,10 +376,6 @@ const submitRevision = async (vehicle) => {
     fieldErrors.cost = 'O custo não pode ser negativo.'
     hasError = true
   }
-  // alinhado com a regra "after" (estritamente posterior) do backend:
-  // datas iguais também são bloqueadas aqui, evitando ida desnecessária à API.
-  // erro fica preso especificamente ao campo "Data da próxima revisão", não a um banner genérico,
-  // pra não ser confundido com o campo "Data da revisão atual".
   if (
     formData.next_revision_date &&
     formData.revision_date &&
@@ -443,11 +416,6 @@ const submitRevision = async (vehicle) => {
 
     isSubmitting.value = true
     try {
-      // envia o payload COMPLETO (não só os campos alterados). O backend exige alguns
-      // campos como obrigatórios em toda atualização (ex.: revision_date), então mandar
-      // apenas o que mudou fazia a API rejeitar o request mesmo com o campo preenchido na tela.
-      // A checagem "nada mudou" acima já garante que só chegamos aqui se algo mudou de fato,
-      // então enviar tudo aqui não gera updates vazios desnecessários.
       const payload = { vehicle_id: vehicle.id, ...comparable }
       const rawUpdated = await revisionService.update(editingRevisionId.value, payload)
       const updated = rawUpdated?.data ?? rawUpdated
@@ -532,6 +500,11 @@ const confirmDelete = async (vehicleId, revisionId) => {
   }
 }
 
+// Fecha esse modal e pede pro componente pai abrir o modal de cadastro de veículo
+const goToVehicleRegistration = () => {
+  emit('register-vehicle')
+}
+
 onMounted(loadAll)
 </script>
 
@@ -543,10 +516,18 @@ onMounted(loadAll)
 
     <div
       v-else-if="!vehicles.length"
-      class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-surface-border py-12 text-center"
+      class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-surface-border py-12 text-center"
     >
       <Car :size="24" class="text-ink-300" />
       <p class="text-sm text-ink-500">Essa pessoa ainda não tem veículos cadastrados.</p>
+      <button
+        type="button"
+        class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-brand-700"
+        @click="goToVehicleRegistration"
+      >
+        <Plus :size="14" />
+        Cadastrar veículo
+      </button>
     </div>
 
     <!-- mobile-first: max-h menor em telas pequenas (menos chrome de teclado/URL bar

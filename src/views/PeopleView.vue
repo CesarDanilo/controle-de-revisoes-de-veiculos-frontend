@@ -438,6 +438,7 @@ const sanitizeNumericFilter = (field) => {
       v-if="isRevisionsModalOpen"
       :person="personForRevisions"
       @close="closeRevisionsModal"
+      @register-vehicle="openVehicleModal(personForRevisions)"
     />
   </AppShell>
 </template>
