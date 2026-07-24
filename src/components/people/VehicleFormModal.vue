@@ -268,10 +268,66 @@ const handleModelPaste = (event) => {
   form.model = newValue.slice(0, MODEL_MAX_LENGTH)
 }
 
-const LICENSE_PLATE_MAX_LENGTH = 7
-
 const isLetter = (char) => /^[A-Za-z]$/.test(char)
 const isDigit = (char) => /^[0-9]$/.test(char)
+
+const YEAR_MAX_LENGTH = 4
+
+// filtra e formata um valor completo de ano (usado no v-model e no paste)
+const formatYear = (value) => {
+  return value.replace(/\D/g, '').slice(0, YEAR_MAX_LENGTH)
+}
+
+const yearValue = computed({
+  get: () => form.year,
+  set: (value) => {
+    form.year = formatYear(value)
+  },
+})
+
+const handleYearKeydown = (event) => {
+  const allowedKeys = [
+    'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End',
+    'Enter', 'Escape',
+  ]
+
+  if (event.ctrlKey || event.metaKey || allowedKeys.includes(event.key)) {
+    return
+  }
+
+  // ignora teclas especiais (Shift, CapsLock, F1 etc.)
+  if (event.key.length !== 1) {
+    return
+  }
+
+  // bloqueia qualquer coisa que não seja dígito
+  if (!isDigit(event.key)) {
+    event.preventDefault()
+    return
+  }
+
+  const input = event.target
+  const hasSelection = input.selectionStart !== input.selectionEnd
+
+  // já está no limite e não há seleção pra substituir: bloqueia
+  if (form.year.length >= YEAR_MAX_LENGTH && !hasSelection) {
+    event.preventDefault()
+  }
+}
+
+const handleYearPaste = (event) => {
+  event.preventDefault()
+  const pasted = (event.clipboardData || window.clipboardData).getData('text')
+  const input = event.target
+  const start = input.selectionStart
+  const end = input.selectionEnd
+
+  const newValue = form.year.slice(0, start) + pasted + form.year.slice(end)
+  form.year = formatYear(newValue)
+}
+
+const LICENSE_PLATE_MAX_LENGTH = 7
 
 // define o tipo de caractere aceito em cada posição da placa
 const licensePlateCharAllowed = (position, char) => {
@@ -487,12 +543,14 @@ const handleLicensePlatePaste = (event) => {
           <div class="grid grid-cols-2 gap-3">
             <div class="flex flex-col gap-1.5">
               <BaseInput
-                v-model="form.year"
+                v-model="yearValue"
                 label="Ano"
                 :icon="Calendar"
                 placeholder="2024"
                 inputmode="numeric"
                 maxlength="4"
+                @keydown="handleYearKeydown"
+                @paste="handleYearPaste"
               />
               <span v-if="fieldErrors.year" class="text-xs text-red-600">{{ fieldErrors.year[0] }}</span>
             </div>
