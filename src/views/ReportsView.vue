@@ -103,6 +103,7 @@ const loadAll = async () => {
     fetchVehicleReports(),
     fetchPeopleReports(),
     fetchRevisionReports(periodStart.value, periodEnd.value),
+    fetchAvgIntervalByPerson(),
   ])
 }
 
