@@ -310,7 +310,7 @@ const emailCharCount = computed(() => form.email.length)
             label="E-mail"
             type="email"
             :icon="Mail"
-            placeholder="pessoa@exemplo.com"
+            placeholder="email@exemplo.com"
             :maxlength="EMAIL_MAX_LENGTH"
             @keydown="blockEmailOverflow"
             @input="sanitizeEmailLength"
