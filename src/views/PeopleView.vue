@@ -1,454 +1,405 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { Users, Plus, Pencil, Trash2, Car, Wrench, Mail, Phone, IdCard, Search, X } from '@lucide/vue'
-import AppShell from '../components/layout/AppShell.vue'
-import EmptyState from '../components/dashboard/EmptyState.vue'
-import BaseButton from '../components/ui/BaseButton.vue'
-import ConfirmModal from '../components/ui/ConfirmModal.vue'
-import PersonFormModal from '../components/people/PersonFormModal.vue'
-import VehicleFormModal from '../components/people/VehicleFormModal.vue'
-import RevisionsModal from '../components/people/RevisionsModal.vue'
-import { usePeople } from '../composables/usePeople'
-import { useToast } from '../composables/useToast'
-import { maskPhone, maskCPF, blockNonNumericKey } from '../utils/masks'
-import { translateApiError } from '../utils/apiErrors'
+import { reactive, ref, computed, watch } from 'vue'
+import { User, Mail, Phone, IdCard, Loader2, CheckCircle2, Building2 } from '@lucide/vue'
+import BaseModal from '../ui/BaseModal.vue'
+import BaseInput from '../ui/BaseInput.vue'
+import BaseButton from '../ui/BaseButton.vue'
+import { personSchema } from '../../schemas/person.schema'
+import { maskPhone } from '../../utils/masks'
+import { useToast } from '../../composables/useToast'
+import { useEmailValidation } from '../../composables/useEmailValidation'
 
-const { people, isLoading, errorMessage, fetchPeople, createPerson, updatePerson, deletePerson } =
-  usePeople()
+const props = defineProps({
+  person: { type: Object, default: null },
+})
+
+const emit = defineEmits(['close', 'submit'])
 
 const toast = useToast()
 
-const isModalOpen = ref(false)
-const editingPerson = ref(null)
+const isEditing = !!props.person
 
-const isConfirmOpen = ref(false)
-const personToDelete = ref(null)
-const isDeleting = ref(false)
-const isSubmitting = ref(false)
+const NAME_MAX_LENGTH = 100
+const EMAIL_MAX_LENGTH = 100
 
-const isVehicleModalOpen = ref(false)
-const personForVehicle = ref(null)
-
-const isRevisionsModalOpen = ref(false)
-const personForRevisions = ref(null)
-
-// --- Filtros ---
-const filters = ref({
-  name: '',
-  email: '',
-  phone: '',
-  document: '',
-})
-
-const hasActiveFilters = computed(() =>
-  Object.values(filters.value).some((value) => value.trim() !== '')
+// 🔴 AQUI — tipo de pessoa, controlado manualmente pelo usuário
+// no modo edição, detecta o tipo inicial pelo tamanho do documento salvo
+const personType = ref(
+  props.person?.document && props.person.document.replace(/\D/g, '').length === 14
+    ? 'PJ'
+    : 'PF'
 )
 
-const normalize = (value) =>
-  (value ?? '')
-    .toString()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-
-const filteredPeople = computed(() => {
-  const { name, email, phone, document } = filters.value
-
-  return people.value.filter((person) => {
-    const matchesName = name.trim() ? normalize(person.name).includes(normalize(name)) : true
-    const matchesEmail = email.trim() ? normalize(person.email).includes(normalize(email)) : true
-    const matchesPhone = phone.trim() ? normalize(person.phone).includes(normalize(phone)) : true
-    const matchesDocument = document.trim()
-      ? normalize(person.document).includes(normalize(document))
-      : true
-
-    return matchesName && matchesEmail && matchesPhone && matchesDocument
-  })
+const form = reactive({
+  name: props.person?.name ?? '',
+  email: props.person?.email ?? '',
+  phone: props.person?.phone ?? '',       // guarda só dígitos
+  document: props.person?.document ?? '', // guarda só dígitos (CPF ou CNPJ)
+  gender: props.person?.gender ?? 'O',
 })
 
-const clearFilters = () => {
-  filters.value = { name: '', email: '', phone: '', document: '' }
-}
-// --- fim filtros ---
+// ---------- snapshot original (só relevante no modo edição) ----------
+const originalSnapshot = isEditing
+  ? {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      phone: form.phone,
+      document: form.document,
+      gender: form.gender,
+    }
+  : null
 
-// --- Avatar ---
-const getInitials = (name) => {
-  if (!name) return '?'
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('')
-}
-// --- fim avatar ---
-
-onMounted(fetchPeople)
-
-const openNewPerson = () => {
-  editingPerson.value = null
-  isModalOpen.value = true
+function buildComparablePayload() {
+  return {
+    name: form.name.trim(),
+    email: form.email.trim(),
+    phone: form.phone,
+    document: form.document,
+    gender: form.gender,
+  }
 }
 
-const openEdit = (person) => {
-  editingPerson.value = person
-  isModalOpen.value = true
+function hasChanges() {
+  if (!originalSnapshot) return true
+
+  const current = buildComparablePayload()
+  return Object.keys(current).some((key) => current[key] !== originalSnapshot[key])
 }
 
-const closeModal = () => {
-  isModalOpen.value = false
-  editingPerson.value = null
+// ---------- computeds ligados ao v-model dos inputs ----------
+const phoneModel = computed({
+  get: () => maskPhone(form.phone),
+  set: (val) => {
+    form.phone = val.replace(/\D/g, '').slice(0, 11)
+  },
+})
+
+// 🔴 AQUI — troca de tipo limpa o documento, evita ficar com dígitos
+// de um tipo aplicados na máscara do outro
+function selectPersonType(type) {
+  if (personType.value === type) return
+  personType.value = type
+  form.document = ''
+  fieldErrors.value.document = undefined
 }
 
-const handleSubmit = async (payload) => {
+const DOCUMENT_MAX_LENGTH = computed(() => (personType.value === 'PJ' ? 14 : 11))
+
+function maskCpfLocal(digits) {
+  return digits
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d{1,2})$/, '$1-$2')
+}
+
+function maskCnpj(digits) {
+  return digits
+    .replace(/(\d{2})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1.$2')
+    .replace(/(\d{3})(\d)/, '$1/$2')
+    .replace(/(\d{4})(\d{1,2})$/, '$1-$2')
+}
+
+const documentModel = computed({
+  get: () => {
+    const digits = form.document
+    return personType.value === 'PJ' ? maskCnpj(digits) : maskCpfLocal(digits)
+  },
+  set: (val) => {
+    form.document = val.replace(/\D/g, '').slice(0, DOCUMENT_MAX_LENGTH.value)
+  },
+})
+
+const documentLabel = computed(() => (personType.value === 'PJ' ? 'CNPJ' : 'CPF'))
+const documentPlaceholder = computed(() =>
+  personType.value === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'
+)
+
+const fieldErrors = ref({})
+const isSubmitting = ref(false)
+
+// ---------- validação de email via Abstract API ----------
+const { isChecking, isValid, errorMessage, checkEmail, checkEmailDebounced } = useEmailValidation()
+
+watch(
+  () => form.email,
+  (newEmail) => {
+    if (isEditing && newEmail.trim() === originalSnapshot.email) {
+      isValid.value = null
+      return
+    }
+
+    const trimmed = newEmail.trim()
+    if (trimmed.length > 5) {
+      checkEmailDebounced(trimmed)
+    } else {
+      isValid.value = null
+    }
+  }
+)
+
+const handleSubmit = async () => {
+  const result = personSchema.safeParse(form)
+
+  if (!result.success) {
+    fieldErrors.value = result.error.flatten().fieldErrors
+    return
+  }
+
+  // 🔴 AQUI — garante consistência entre o tipo selecionado e o tamanho do documento
+  // (evita, por exemplo, usuário selecionar PF mas colar um CNPJ completo)
+  const documentDigits = form.document.replace(/\D/g, '')
+  const expectedLength = personType.value === 'PJ' ? 14 : 11
+  if (documentDigits.length !== expectedLength) {
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      document: [
+        personType.value === 'PJ'
+          ? 'Informe um CNPJ completo (14 dígitos).'
+          : 'Informe um CPF completo (11 dígitos).',
+      ],
+    }
+    return
+  }
+
+  fieldErrors.value = {}
+
+  if (isEditing && !hasChanges()) {
+    toast.info('Nenhuma alteração foi feita.')
+    return
+  }
+
+  const emailUnchanged = isEditing && form.email.trim() === originalSnapshot.email
+
+  if (!emailUnchanged) {
+    await checkEmail(form.email.trim())
+
+    if (isValid.value === false) {
+      toast.error(errorMessage.value || 'Corrija o e-mail antes de continuar.')
+      return
+    }
+  }
+
   isSubmitting.value = true
   try {
-    if (editingPerson.value) {
-      await updatePerson(editingPerson.value.id, payload)
-      toast.success('Pessoa atualizada com sucesso!')
-    } else {
-      await createPerson(payload)
-      toast.success('Pessoa cadastrada com sucesso!')
-    }
-    closeModal()
-  } catch (error) {
-    // 🔴 AQUI — pega a mensagem crua da API e traduz pra algo legível
-    const rawMessage = error.response?.data?.message ?? error.response?.data?.error
-    const message = translateApiError(rawMessage, 'Não foi possível salvar a pessoa.')
-    toast.error(message)
+    await emit('submit', result.data)
   } finally {
     isSubmitting.value = false
   }
 }
 
-const askDelete = (person) => {
-  personToDelete.value = person
-  isConfirmOpen.value = true
-}
+function createLengthGuard(getValue, maxLength) {
+  return function (e) {
+    const controlKeys = [
+      'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+      'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+    ]
+    if (controlKeys.includes(e.key)) return
+    if (e.ctrlKey || e.metaKey) return
+    if (e.key.length > 1) return
 
-const closeConfirm = () => {
-  isConfirmOpen.value = false
-  personToDelete.value = null
-}
+    const target = e.target
+    const hasSelection = target.selectionStart !== target.selectionEnd
+    if (hasSelection) return
 
-const confirmDelete = async () => {
-  if (!personToDelete.value) return
-  isDeleting.value = true
-  try {
-    await deletePerson(personToDelete.value.id)
-    toast.success('Pessoa removida com sucesso!')
-    closeConfirm()
-  } catch (error) {
-    const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível remover a pessoa.'
-    toast.error(message)
-  } finally {
-    isDeleting.value = false
+    if (getValue().length >= maxLength) {
+      e.preventDefault()
+    }
   }
 }
 
-const openVehicleModal = (person) => {
-  personForVehicle.value = person
-  isVehicleModalOpen.value = true
+function blockDocumentOverflow(e) {
+  const controlKeys = [
+    'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+  ]
+  if (controlKeys.includes(e.key)) return
+  if (e.ctrlKey || e.metaKey) return
+
+  if (!/^\d$/.test(e.key)) {
+    e.preventDefault()
+    return
+  }
+
+  const target = e.target
+  const hasSelection = target.selectionStart !== target.selectionEnd
+  if (hasSelection) return
+
+  if (form.document.length >= DOCUMENT_MAX_LENGTH.value) {
+    e.preventDefault()
+  }
 }
 
-const closeVehicleModal = () => {
-  isVehicleModalOpen.value = false
-  personForVehicle.value = null
+const sanitizeNameLength = () => {
+  if (form.name.length > NAME_MAX_LENGTH) {
+    form.name = form.name.slice(0, NAME_MAX_LENGTH)
+  }
 }
 
-const openRevisionsModal = (person) => {
-  personForRevisions.value = person
-  isRevisionsModalOpen.value = true
+const sanitizeEmailLength = () => {
+  if (form.email.length > EMAIL_MAX_LENGTH) {
+    form.email = form.email.slice(0, EMAIL_MAX_LENGTH)
+  }
 }
 
-const closeRevisionsModal = () => {
-  isRevisionsModalOpen.value = false
-  personForRevisions.value = null
+const blockNameOverflow = createLengthGuard(() => form.name, NAME_MAX_LENGTH)
+const blockEmailOverflow = createLengthGuard(() => form.email, EMAIL_MAX_LENGTH)
+
+function createNumericGuard(getRawValue, maxLength) {
+  return function (e) {
+    const controlKeys = [
+      'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+      'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+    ]
+    if (controlKeys.includes(e.key)) return
+    if (e.ctrlKey || e.metaKey) return
+
+    if (!/^\d$/.test(e.key)) {
+      e.preventDefault()
+      return
+    }
+
+    const target = e.target
+    const hasSelection = target.selectionStart !== target.selectionEnd
+    if (hasSelection) return
+
+    if (getRawValue().length >= maxLength) {
+      e.preventDefault()
+    }
+  }
 }
 
-// Fecha o modal de revisões e abre o de veículo para a mesma pessoa
-const goToVehicleRegistrationFromRevisions = () => {
-  const person = personForRevisions.value
-  closeRevisionsModal()
-  openVehicleModal(person)
-}
+const blockPhoneOverflow = createNumericGuard(() => form.phone, 11)
 
-const sanitizeNumericFilter = (field) => {
-  filters.value[field] = filters.value[field].replace(/\D/g, '').slice(0, 11)
-}
+const nameCharCount = computed(() => form.name.length)
+const emailCharCount = computed(() => form.email.length)
 </script>
 
 <template>
-  <AppShell title="Proprietários" subtitle="Gerencie as pessoas cadastradas.">
-    <template #actions>
-      <BaseButton v-if="people.length" class="w-full sm:w-auto" @click="openNewPerson">
-        <Plus :size="16" />
-        Nova pessoa
-      </BaseButton>
-    </template>
-
-    <div v-if="isLoading" class="py-12 text-center text-sm text-ink-500">
-      Carregando pessoas...
-    </div>
-
-    <div v-else-if="errorMessage" class="py-12 text-center text-sm text-red-600">
-      {{ errorMessage }}
-    </div>
-
-    <EmptyState
-      v-else-if="!people.length"
-      :icon="Users"
-      title="Nenhuma pessoa cadastrada"
-      description="Cadastre uma pessoa para começar a vincular veículos e revisões."
-    >
-      <BaseButton @click="openNewPerson">
-        <Plus :size="16" />
-        Cadastrar pessoa
-      </BaseButton>
-    </EmptyState>
-
-    <template v-else>
-      <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div class="relative">
-            <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              v-model="filters.name"
-              type="text"
-              placeholder="Filtrar por nome"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
-            />
-          </div>
-          <div class="relative">
-            <Mail :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              v-model="filters.email"
-              type="text"
-              placeholder="Filtrar por e-mail"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
-            />
-          </div>
-          <div class="relative">
-            <Phone :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              v-model="filters.phone"
-              type="text"
-              placeholder="Filtrar por telefone"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
-              @keydown="blockNonNumericKey"
-              @input="sanitizeNumericFilter('phone')"
-            />
-          </div>
-          <div class="relative">
-            <IdCard :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              v-model="filters.document"
-              type="text"
-              placeholder="Filtrar por CPF"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
-              @keydown="blockNonNumericKey"
-              @input="sanitizeNumericFilter('document')"
-            />
-          </div>
-        </div>
-
-        <div v-if="hasActiveFilters" class="mt-3 flex items-center justify-between">
-          <span class="text-xs text-ink-500">
-            {{ filteredPeople.length }} de {{ people.length }} pessoa(s) encontrada(s)
-          </span>
+  <BaseModal :title="isEditing ? 'Editar pessoa' : 'Nova pessoa'" @close="emit('close')">
+    <form class="flex flex-col gap-4" @submit.prevent="handleSubmit" novalidate>
+      <!-- 🔴 AQUI — seletor manual de tipo de pessoa -->
+      <div class="flex flex-col gap-1.5">
+        <label class="text-sm font-medium text-ink-700">Tipo de cadastro</label>
+        <div class="grid grid-cols-2 gap-2">
           <button
             type="button"
-            class="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-600"
-            @click="clearFilters"
+            class="flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors"
+            :class="personType === 'PF'
+              ? 'border-brand-500 bg-brand-50 text-brand-700'
+              : 'border-surface-border bg-white text-ink-500 hover:bg-ink-50'"
+            @click="selectPersonType('PF')"
           >
-            <X :size="14" />
-            Limpar filtros
+            <User :size="16" />
+            Pessoa Física
+          </button>
+          <button
+            type="button"
+            class="flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors"
+            :class="personType === 'PJ'
+              ? 'border-brand-500 bg-brand-50 text-brand-700'
+              : 'border-surface-border bg-white text-ink-500 hover:bg-ink-50'"
+            @click="selectPersonType('PJ')"
+          >
+            <Building2 :size="16" />
+            Pessoa Jurídica
           </button>
         </div>
       </div>
 
-      <EmptyState
-        v-if="!filteredPeople.length"
-        :icon="Search"
-        title="Nenhuma pessoa encontrada"
-        description="Ajuste os filtros para encontrar a pessoa desejada."
-      >
-        <BaseButton variant="secondary" @click="clearFilters">
-          <X :size="16" />
-          Limpar filtros
-        </BaseButton>
-      </EmptyState>
-
-      <template v-else>
-        <!-- mobile: cards -->
-        <div class="flex flex-col gap-3 sm:hidden">
-          <div
-            v-for="person in filteredPeople"
-            :key="person.id"
-            class="rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03] transition-shadow active:shadow-none"
+      <div class="flex flex-col gap-1.5">
+        <BaseInput
+          v-model="form.name"
+          :label="personType === 'PJ' ? 'Razão social' : 'Nome'"
+          :icon="User"
+          :placeholder="personType === 'PJ' ? 'Nome da empresa' : 'Nome completo'"
+          :maxlength="NAME_MAX_LENGTH"
+          @keydown="blockNameOverflow"
+          @input="sanitizeNameLength"
+        />
+        <div class="flex items-center justify-between">
+          <span v-if="fieldErrors.name" class="text-xs text-red-600">{{ fieldErrors.name[0] }}</span>
+          <span v-else></span>
+          <span
+            class="text-xs"
+            :class="nameCharCount >= NAME_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
           >
-            <div class="flex items-center gap-3">
-              <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
-                {{ getInitials(person.name) }}
-              </div>
-              <p class="truncate text-sm font-semibold text-ink-900">{{ person.name }}</p>
-            </div>
-
-            <div class="mt-3 flex flex-col gap-1.5 text-xs text-ink-500">
-              <div class="flex items-center gap-1.5">
-                <Mail :size="12" class="shrink-0 text-ink-300" />
-                <span class="truncate">{{ person.email || '—' }}</span>
-              </div>
-              <div class="flex items-center gap-1.5">
-                <Phone :size="12" class="shrink-0 text-ink-300" />
-                <span class="truncate">{{ maskPhone(person.phone) || '—' }}</span>
-              </div>
-              <div class="flex items-center gap-1.5">
-                <IdCard :size="12" class="shrink-0 text-ink-300" />
-                <span class="truncate">{{ maskCPF(person.document) || '—' }}</span>
-              </div>
-            </div>
-
-            <div class="mt-3 flex items-center justify-end gap-1 border-t border-ink-100/70 pt-3">
-              <button
-                type="button"
-                class="rounded-lg p-2.5 text-ink-400 transition-colors active:bg-brand-50 active:text-brand-600"
-                aria-label="Adicionar veículo"
-                @click="openVehicleModal(person)"
-              >
-                <Car :size="18" />
-              </button>
-              <button
-                type="button"
-                class="rounded-lg p-2.5 text-ink-400 transition-colors active:bg-brand-50 active:text-brand-600"
-                aria-label="Ver revisões"
-                @click="openRevisionsModal(person)"
-              >
-                <Wrench :size="18" />
-              </button>
-              <button
-                type="button"
-                class="rounded-lg p-2.5 text-ink-400 transition-colors active:bg-ink-50 active:text-brand-600"
-                aria-label="Editar"
-                @click="openEdit(person)"
-              >
-                <Pencil :size="18" />
-              </button>
-              <button
-                type="button"
-                class="rounded-lg p-2.5 text-ink-400 transition-colors active:bg-red-50 active:text-red-600"
-                aria-label="Remover"
-                @click="askDelete(person)"
-              >
-                <Trash2 :size="18" />
-              </button>
-            </div>
-          </div>
+            {{ nameCharCount }}/{{ NAME_MAX_LENGTH }}
+          </span>
         </div>
+      </div>
 
-        <!-- sm and up: full table -->
-        <div class="hidden overflow-hidden rounded-2xl border border-ink-100/70 bg-white shadow-sm shadow-ink-900/[0.03] sm:block">
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm">
-              <thead class="bg-ink-50/60">
-                <tr>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Nome</th>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">E-mail</th>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Telefone</th>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">CPF</th>
-                  <th class="px-5 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-ink-400">Ações</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-ink-100/60">
-                <tr
-                  v-for="person in filteredPeople"
-                  :key="person.id"
-                  class="group text-ink-700 transition-colors hover:bg-ink-50/50"
-                >
-                  <td class="px-5 py-3.5">
-                    <div class="flex items-center gap-3">
-                      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-600">
-                        {{ getInitials(person.name) }}
-                      </div>
-                      <span class="font-medium text-ink-900">{{ person.name }}</span>
-                    </div>
-                  </td>
-                  <td class="px-5 py-3.5 text-ink-500">{{ person.email || '—' }}</td>
-                  <td class="px-5 py-3.5 text-ink-500">{{ maskPhone(person.phone) || '—' }}</td>
-                  <td class="px-5 py-3.5 text-ink-500">{{ maskCPF(person.document) || '—' }}</td>
-                  <td class="px-5 py-3.5">
-                    <div class="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                      <button
-                        type="button"
-                        class="rounded-lg p-2 text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
-                        aria-label="Adicionar veículo"
-                        @click="openVehicleModal(person)"
-                      >
-                        <Car :size="16" />
-                      </button>
-                      <button
-                        type="button"
-                        class="rounded-lg p-2 text-ink-400 transition-colors hover:bg-brand-50 hover:text-brand-600"
-                        aria-label="Ver revisões"
-                        @click="openRevisionsModal(person)"
-                      >
-                        <Wrench :size="16" />
-                      </button>
-                      <button
-                        type="button"
-                        class="rounded-lg p-2 text-ink-400 transition-colors hover:bg-ink-50 hover:text-brand-600"
-                        aria-label="Editar"
-                        @click="openEdit(person)"
-                      >
-                        <Pencil :size="16" />
-                      </button>
-                      <button
-                        type="button"
-                        class="rounded-lg p-2 text-ink-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                        aria-label="Remover"
-                        @click="askDelete(person)"
-                      >
-                        <Trash2 :size="16" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+      <div class="flex flex-col gap-1.5">
+        <div class="relative">
+          <BaseInput
+            v-model="form.email"
+            label="E-mail"
+            type="email"
+            :icon="Mail"
+            placeholder="pessoa@exemplo.com"
+            :maxlength="EMAIL_MAX_LENGTH"
+            @keydown="blockEmailOverflow"
+            @input="sanitizeEmailLength"
+          />
+          <Loader2
+            v-if="isChecking"
+            :size="16"
+            class="absolute right-3 top-9 animate-spin text-ink-300"
+          />
+          <CheckCircle2
+            v-else-if="isValid === true"
+            :size="16"
+            class="absolute right-3 top-9 text-green-500"
+          />
         </div>
-      </template>
-    </template>
+        <div class="flex items-center justify-between">
+          <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
+          <span v-else-if="isValid === false" class="text-xs text-red-600">{{ errorMessage }}</span>
+          <span v-else-if="isValid === true" class="text-xs text-green-600">E-mail válido</span>
+          <span v-else></span>
+          <span
+            class="text-xs"
+            :class="emailCharCount >= EMAIL_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
+          >
+            {{ emailCharCount }}/{{ EMAIL_MAX_LENGTH }}
+          </span>
+        </div>
+      </div>
 
-    <PersonFormModal
-      v-if="isModalOpen"
-      :person="editingPerson"
-      :is-submitting="isSubmitting"
-      @close="closeModal"
-      @submit="handleSubmit"
-    />
+      <div class="flex flex-col gap-1.5">
+        <BaseInput
+          v-model="phoneModel"
+          label="Telefone"
+          :icon="Phone"
+          placeholder="(00) 00000-0000"
+          inputmode="numeric"
+          maxlength="15"
+          @keydown="blockPhoneOverflow"
+        />
+        <span v-if="fieldErrors.phone" class="text-xs text-red-600">{{ fieldErrors.phone[0] }}</span>
+      </div>
 
-    <ConfirmModal
-      v-if="isConfirmOpen"
-      title="Remover pessoa"
-      :message="`Tem certeza que deseja remover ${personToDelete?.name}? Essa ação não pode ser desfeita.`"
-      confirm-label="Remover"
-      :is-loading="isDeleting"
-      @close="closeConfirm"
-      @confirm="confirmDelete"
-    />
+      <div class="flex flex-col gap-1.5">
+        <BaseInput
+          v-model="documentModel"
+          :label="documentLabel"
+          :icon="IdCard"
+          :placeholder="documentPlaceholder"
+          inputmode="numeric"
+          :maxlength="personType === 'PJ' ? 18 : 14"
+          @keydown="blockDocumentOverflow"
+        />
+        <span v-if="fieldErrors.document" class="text-xs text-red-600">{{ fieldErrors.document[0] }}</span>
+      </div>
 
-    <VehicleFormModal
-      v-if="isVehicleModalOpen"
-      :person="personForVehicle"
-      @close="closeVehicleModal"
-    />
-
-    <RevisionsModal
-      v-if="isRevisionsModalOpen"
-      :person="personForRevisions"
-      @close="closeRevisionsModal"
-      @register-vehicle="goToVehicleRegistrationFromRevisions"
-    />
-  </AppShell>
+      <div class="mt-2 flex justify-end gap-3">
+        <BaseButton type="button" variant="ghost" @click="emit('close')">
+          Cancelar
+        </BaseButton>
+        <BaseButton type="submit" :disabled="isSubmitting || isChecking">
+          {{ isSubmitting ? 'Salvando...' : isEditing ? 'Salvar alterações' : 'Cadastrar' }}
+        </BaseButton>
+      </div>
+    </form>
+  </BaseModal>
 </template>
