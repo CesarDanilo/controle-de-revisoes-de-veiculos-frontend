@@ -62,7 +62,7 @@ export const personSchema = z.object({
       if (age > MAX_AGE) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: `Essa data indica ${age} anos. Confirme se está correta.`,
+          message: `Essa data indica ${age} anos. Insira outra data!.`,
         })
       }
     }),
