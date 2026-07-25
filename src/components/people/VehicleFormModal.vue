@@ -127,9 +127,52 @@ const cancelBrandCreation = () => {
   newBrandName.value = ''
 }
 
+// 🔴 AQUI — limite de caracteres pro nome da marca
+const BRAND_NAME_MAX_LENGTH = 30
+
+// 🔴 AQUI — bloqueio de digitação ao atingir o limite (mesmo padrão do Modelo)
+const handleBrandNameKeydown = (event) => {
+  const allowedKeys = [
+    'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End',
+    'Enter', 'Escape',
+  ]
+
+  if (event.ctrlKey || event.metaKey || allowedKeys.includes(event.key)) {
+    return
+  }
+
+  const input = event.target
+  const hasSelection = input.selectionStart !== input.selectionEnd
+
+  if (newBrandName.value.length >= BRAND_NAME_MAX_LENGTH && !hasSelection) {
+    event.preventDefault()
+  }
+}
+
+// 🔴 AQUI — trunca em caso de colar texto grande (Ctrl+V)
+const handleBrandNamePaste = (event) => {
+  event.preventDefault()
+  const pasted = (event.clipboardData || window.clipboardData).getData('text')
+  const input = event.target
+  const start = input.selectionStart
+  const end = input.selectionEnd
+
+  const newValue = newBrandName.value.slice(0, start) + pasted + newBrandName.value.slice(end)
+  newBrandName.value = newValue.slice(0, BRAND_NAME_MAX_LENGTH)
+}
+
 const saveNewBrand = async () => {
   const name = newBrandName.value.toUpperCase().trim()
   if (!name) return
+
+  // 🔴 AQUI — checagem local: já existe marca com esse nome na lista carregada?
+  // Evita a chamada de API e dá feedback instantâneo, sem esperar o backend.
+  const alreadyExists = brands.value.some((b) => b.name.toUpperCase().trim() === name)
+  if (alreadyExists) {
+    toast.error('Essa marca já está cadastrada.')
+    return
+  }
 
   isSavingBrand.value = true
   try {
@@ -139,7 +182,13 @@ const saveNewBrand = async () => {
     toast.success('Marca cadastrada com sucesso!')
     cancelBrandCreation()
   } catch (error) {
-    const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Já existe um cadastro para essa marca!'
+    // 🔴 AQUI — feedback mais claro caso o backend acuse duplicidade
+    // (cobre o caso de outra pessoa ter cadastrado a mesma marca entre o
+    // carregamento da lista e esse submit — condição de corrida)
+    const rawMessage = error.response?.data?.message ?? error.response?.data?.error
+    const message = rawMessage?.includes('already been taken')
+      ? 'Essa marca já está cadastrada.'
+      : (rawMessage ?? 'Não foi possível cadastrar a marca.')
     toast.error(message)
   } finally {
     isSavingBrand.value = false
@@ -267,6 +316,10 @@ const handleModelPaste = (event) => {
   const newValue = form.model.slice(0, start) + pasted + form.model.slice(end)
   form.model = newValue.slice(0, MODEL_MAX_LENGTH)
 }
+
+// 🔴 AQUI — computeds pro contador de caracteres (Modelo e Nova marca)
+const modelCharCount = computed(() => form.model.length)
+const brandNameCharCount = computed(() => newBrandName.value.length)
 
 const isLetter = (char) => /^[A-Za-z]$/.test(char)
 const isDigit = (char) => /^[0-9]$/.test(char)
@@ -496,32 +549,44 @@ const handleLicensePlatePaste = (event) => {
               </option>
             </select>
 
-            <div v-else class="flex items-center gap-2">
-              <input
-                ref="newBrandInputRef"
-                v-model="newBrandName"
-                type="text"
-                placeholder="Nome da marca"
-                class="flex-1 rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                @keyup.enter="saveNewBrand"
-              />
-              <button
-                type="button"
-                class="shrink-0 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="isSavingBrand || !newBrandName.trim()"
-                @click="saveNewBrand"
+            <div v-else class="flex flex-col gap-1">
+              <div class="flex items-center gap-2">
+                <input
+                  ref="newBrandInputRef"
+                  v-model="newBrandName"
+                  type="text"
+                  placeholder="Nome da marca"
+                  class="flex-1 rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  :maxlength="BRAND_NAME_MAX_LENGTH"
+                  @keydown.enter="saveNewBrand"
+                  @keydown="handleBrandNameKeydown"
+                  @paste="handleBrandNamePaste"
+                />
+                <button
+                  type="button"
+                  class="shrink-0 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="isSavingBrand || !newBrandName.trim()"
+                  @click="saveNewBrand"
+                >
+                  {{ isSavingBrand ? 'Salvando...' : 'Salvar' }}
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-xl p-2 text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700"
+                  aria-label="Cancelar"
+                  :disabled="isSavingBrand"
+                  @click="cancelBrandCreation"
+                >
+                  <X :size="16" />
+                </button>
+              </div>
+              <!-- 🔴 AQUI — contador de caracteres do nome da marca -->
+              <span
+                class="self-end text-xs"
+                :class="brandNameCharCount >= BRAND_NAME_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
               >
-                {{ isSavingBrand ? 'Salvando...' : 'Salvar' }}
-              </button>
-              <button
-                type="button"
-                class="shrink-0 rounded-xl p-2 text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700"
-                aria-label="Cancelar"
-                :disabled="isSavingBrand"
-                @click="cancelBrandCreation"
-              >
-                <X :size="16" />
-              </button>
+                {{ brandNameCharCount }}/{{ BRAND_NAME_MAX_LENGTH }}
+              </span>
             </div>
 
             <span v-if="fieldErrors.brand_id" class="text-xs text-red-600">{{ fieldErrors.brand_id[0] }}</span>
@@ -533,11 +598,21 @@ const handleLicensePlatePaste = (event) => {
               label="Modelo"
               :icon="Car"
               placeholder="Ex: Civic"
-              maxlength="40"
+              :maxlength="MODEL_MAX_LENGTH"
               @keydown="handleModelKeydown"
               @paste="handleModelPaste"
             />
-            <span v-if="fieldErrors.model" class="text-xs text-red-600">{{ fieldErrors.model[0] }}</span>
+            <div class="flex items-center justify-between">
+              <span v-if="fieldErrors.model" class="text-xs text-red-600">{{ fieldErrors.model[0] }}</span>
+              <span v-else></span>
+              <!-- 🔴 AQUI — contador de caracteres do modelo -->
+              <span
+                class="text-xs"
+                :class="modelCharCount >= MODEL_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
+              >
+                {{ modelCharCount }}/{{ MODEL_MAX_LENGTH }}
+              </span>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
