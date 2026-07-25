@@ -30,7 +30,7 @@ const handleGoogleLogin = () => {
             <span class="h-px flex-1 bg-ink-100" />
           </div>
 
-          <BaseButton class="flex items-center justify-center gap-2" type="button" variant="outline" block @click="handleGoogleLogin">
+          <BaseButton class="flex items-center justify-center gap-2 cursor-pointer hover:bg-zinc-200 rounded-2xl" type="button" variant="outline" block @click="handleGoogleLogin">
             <img src="/google-icon.svg" alt="" class="h-4 w-4" />
             Continuar com Google
           </BaseButton>
