@@ -1,12 +1,13 @@
 <script setup>
-import { reactive, ref, computed } from 'vue'
-import { User, Mail, Phone, IdCard, Calendar } from '@lucide/vue'
+import { reactive, ref, computed, watch } from 'vue'
+import { User, Mail, Phone, IdCard, Calendar, Loader2, CheckCircle2 } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import { personSchema } from '../../schemas/person.schema'
 import { maskPhone, maskCPF } from '../../utils/masks'
 import { useToast } from '../../composables/useToast'
+import { useEmailValidation } from '../../composables/useEmailValidation'
 
 const props = defineProps({
   person: { type: Object, default: null },
@@ -28,8 +29,6 @@ const form = reactive({
 })
 
 // ---------- snapshot original (só relevante no modo edição) ----------
-// Usado pra comparar "de igual pra igual" no submit e evitar request
-// desnecessário quando nada foi alterado.
 const originalSnapshot = isEditing
   ? {
       name: form.name.trim(),
@@ -53,7 +52,7 @@ function buildComparablePayload() {
 }
 
 function hasChanges() {
-  if (!originalSnapshot) return true // criação: sempre "tem mudança" (não há original pra comparar)
+  if (!originalSnapshot) return true
 
   const current = buildComparablePayload()
   return Object.keys(current).some((key) => current[key] !== originalSnapshot[key])
@@ -77,6 +76,27 @@ const documentModel = computed({
 const fieldErrors = ref({})
 const isSubmitting = ref(false)
 
+// ---------- validação de email via Abstract API ----------
+const { isChecking, isValid, errorMessage, checkEmail, checkEmailDebounced } = useEmailValidation()
+
+watch(
+  () => form.email,
+  (newEmail) => {
+    // no modo edição, se o email não mudou em relação ao original, não gasta cota de API
+    if (isEditing && newEmail.trim() === originalSnapshot.email) {
+      isValid.value = null
+      return
+    }
+
+    const trimmed = newEmail.trim()
+    if (trimmed.length > 5) {
+      checkEmailDebounced(trimmed)
+    } else {
+      isValid.value = null
+    }
+  }
+)
+
 const handleSubmit = async () => {
   const result = personSchema.safeParse(form)
 
@@ -91,6 +111,19 @@ const handleSubmit = async () => {
   if (isEditing && !hasChanges()) {
     toast.info('Nenhuma alteração foi feita.')
     return
+  }
+
+  // --- validação final de email antes de enviar ---
+  const emailUnchanged = isEditing && form.email.trim() === originalSnapshot.email
+
+  if (!emailUnchanged) {
+    // garante que a checagem mais recente terminou antes do submit
+    await checkEmail(form.email.trim())
+
+    if (isValid.value === false) {
+      toast.error(errorMessage.value || 'Corrija o e-mail antes de continuar.')
+      return
+    }
   }
 
   isSubmitting.value = true
@@ -110,19 +143,15 @@ function createNumericGuard(getRawValue, maxLength) {
     if (controlKeys.includes(e.key)) return
     if (e.ctrlKey || e.metaKey) return
 
-    // bloqueia qualquer coisa que não seja dígito
     if (!/^\d$/.test(e.key)) {
       e.preventDefault()
       return
     }
 
-    // se o usuário tem texto selecionado, o digito vai substituir a seleção,
-    // então não bloqueia mesmo estando no limite
     const target = e.target
     const hasSelection = target.selectionStart !== target.selectionEnd
     if (hasSelection) return
 
-    // bloqueia se já atingiu o limite de dígitos "reais" (sem máscara)
     if (getRawValue().length >= maxLength) {
       e.preventDefault()
     }
@@ -137,8 +166,6 @@ function createLengthGuard(getValue, maxLength) {
     ]
     if (controlKeys.includes(e.key)) return
     if (e.ctrlKey || e.metaKey) return
-
-    // ignora teclas de tamanho > 1 que não sejam impressão de caractere (ex: Shift, CapsLock, F1...)
     if (e.key.length > 1) return
 
     const target = e.target
@@ -161,7 +188,6 @@ const blockNameOverflow = createLengthGuard(() => form.name, 100)
 
 const blockPhoneOverflow = createNumericGuard(() => form.phone, 11)
 const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
-
 </script>
 
 <template>
@@ -181,8 +207,22 @@ const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <BaseInput v-model="form.email" label="E-mail" type="email" :icon="Mail" placeholder="pessoa@exemplo.com" />
+        <div class="relative">
+          <BaseInput v-model="form.email" label="E-mail" type="email" :icon="Mail" placeholder="pessoa@exemplo.com" />
+          <Loader2
+            v-if="isChecking"
+            :size="16"
+            class="absolute right-3 top-9 animate-spin text-ink-300"
+          />
+          <CheckCircle2
+            v-else-if="isValid === true"
+            :size="16"
+            class="absolute right-3 top-9 text-green-500"
+          />
+        </div>
         <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
+        <span v-else-if="isValid === false" class="text-xs text-red-600">{{ errorMessage }}</span>
+        <span v-else-if="isValid === true" class="text-xs text-green-600">E-mail válido</span>
       </div>
 
       <div class="flex flex-col gap-1.5">
@@ -239,7 +279,7 @@ const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
         <BaseButton type="button" variant="ghost" @click="emit('close')">
           Cancelar
         </BaseButton>
-        <BaseButton type="submit" :disabled="isSubmitting">
+        <BaseButton type="submit" :disabled="isSubmitting || isChecking">
           {{ isSubmitting ? 'Salvando...' : isEditing ? 'Salvar alterações' : 'Cadastrar' }}
         </BaseButton>
       </div>
