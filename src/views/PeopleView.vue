@@ -11,6 +11,7 @@ import RevisionsModal from '../components/people/RevisionsModal.vue'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
 import { maskPhone, maskCPF, blockNonNumericKey } from '../utils/masks'
+import { translateApiError } from '../utils/apiErrors'
 
 const { people, isLoading, errorMessage, fetchPeople, createPerson, updatePerson, deletePerson } =
   usePeople()
@@ -111,7 +112,9 @@ const handleSubmit = async (payload) => {
     }
     closeModal()
   } catch (error) {
-    const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar a pessoa.'
+    // 🔴 AQUI — pega a mensagem crua da API e traduz pra algo legível
+    const rawMessage = error.response?.data?.message ?? error.response?.data?.error
+    const message = translateApiError(rawMessage, 'Não foi possível salvar a pessoa.')
     toast.error(message)
   } finally {
     isSubmitting.value = false
