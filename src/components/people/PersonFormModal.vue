@@ -1,6 +1,6 @@
 <script setup>
 import { reactive, ref, computed, watch } from 'vue'
-import { User, Mail, Phone, IdCard, Loader2, CheckCircle2, Building2 } from '@lucide/vue'
+import { User, Mail, Phone, IdCard, Loader2, CheckCircle2, Building2, Calendar } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
@@ -36,6 +36,8 @@ const form = reactive({
   phone: props.person?.phone ?? '',
   document: props.person?.document ?? '',
   gender: props.person?.gender ?? 'O',
+  // 🔴 AQUI — data de nascimento, aplicável apenas a Pessoa Física
+  birthDate: props.person?.birthDate ?? '',
 })
 
 const originalSnapshot = isEditing
@@ -45,6 +47,7 @@ const originalSnapshot = isEditing
       phone: form.phone,
       document: form.document,
       gender: form.gender,
+      birthDate: form.birthDate,
     }
   : null
 
@@ -55,6 +58,7 @@ function buildComparablePayload() {
     phone: form.phone,
     document: form.document,
     gender: form.gender,
+    birthDate: personType.value === 'PF' ? form.birthDate : '',
   }
 }
 
@@ -72,11 +76,16 @@ const phoneModel = computed({
 })
 
 // 🔴 AQUI — troca de tipo limpa o documento (evita máscara errada com dígitos do outro tipo)
+// e limpa a data de nascimento ao mudar para Pessoa Jurídica (campo não se aplica)
 function selectPersonType(type) {
   if (personType.value === type) return
   personType.value = type
   form.document = ''
   fieldErrors.value.document = undefined
+  if (type === 'PJ') {
+    form.birthDate = ''
+    fieldErrors.value.birthDate = undefined
+  }
 }
 
 const DOCUMENT_MAX_LENGTH = computed(() => (personType.value === 'PJ' ? 14 : 11))
@@ -93,6 +102,9 @@ const documentLabel = computed(() => (personType.value === 'PJ' ? 'CNPJ' : 'CPF'
 const documentPlaceholder = computed(() =>
   personType.value === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'
 )
+
+// 🔴 AQUI — data máxima permitida é hoje (não deixa cadastrar nascimento no futuro)
+const todayISO = new Date().toISOString().split('T')[0]
 
 const fieldErrors = ref({})
 const isSubmitting = ref(false)
@@ -116,6 +128,8 @@ watch(
 )
 
 const handleSubmit = async () => {
+  // 🔴 AQUI — validação de birthDate (obrigatória/formatos/limites) agora vive
+  // inteiramente no personSchema.superRefine, com base no tamanho do documento
   const result = personSchema.safeParse(form)
 
   if (!result.success) {
@@ -157,7 +171,11 @@ const handleSubmit = async () => {
 
   isSubmitting.value = true
   try {
-    await emit('submit', result.data)
+    const payload = {
+      ...result.data,
+      birthDate: personType.value === 'PF' ? form.birthDate : null,
+    }
+    await emit('submit', payload)
   } finally {
     isSubmitting.value = false
   }
@@ -301,6 +319,18 @@ const emailCharCount = computed(() => form.email.length)
             {{ nameCharCount }}/{{ NAME_MAX_LENGTH }}
           </span>
         </div>
+      </div>
+
+      <!-- 🔴 AQUI — data de nascimento, exibida somente para Pessoa Física -->
+      <div v-if="personType === 'PF'" class="flex flex-col gap-1.5">
+        <BaseInput
+          v-model="form.birthDate"
+          label="Data de nascimento"
+          type="date"
+          :icon="Calendar"
+          :max="todayISO"
+        />
+        <span v-if="fieldErrors.birthDate" class="text-xs text-red-600">{{ fieldErrors.birthDate[0] }}</span>
       </div>
 
       <div class="flex flex-col gap-1.5">
