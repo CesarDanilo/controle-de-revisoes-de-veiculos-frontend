@@ -19,6 +19,10 @@ const toast = useToast()
 
 const isEditing = !!props.person
 
+// 🔴 AQUI — limites centralizados, facilita manutenção
+const NAME_MAX_LENGTH = 100
+const EMAIL_MAX_LENGTH = 100
+
 const form = reactive({
   name: props.person?.name ?? '',
   email: props.person?.email ?? '',
@@ -179,15 +183,29 @@ function createLengthGuard(getValue, maxLength) {
 }
 
 const sanitizeNameLength = () => {
-  if (form.name.length > 100) {
-    form.name = form.name.slice(0, 100)
+  if (form.name.length > NAME_MAX_LENGTH) {
+    form.name = form.name.slice(0, NAME_MAX_LENGTH)
   }
 }
 
-const blockNameOverflow = createLengthGuard(() => form.name, 100)
+// 🔴 AQUI — sanitização de overflow pro email (cobre paste de texto grande)
+const sanitizeEmailLength = () => {
+  if (form.email.length > EMAIL_MAX_LENGTH) {
+    form.email = form.email.slice(0, EMAIL_MAX_LENGTH)
+  }
+}
+
+const blockNameOverflow = createLengthGuard(() => form.name, NAME_MAX_LENGTH)
+
+// 🔴 AQUI — bloqueio de digitação pro email ao atingir o limite
+const blockEmailOverflow = createLengthGuard(() => form.email, EMAIL_MAX_LENGTH)
 
 const blockPhoneOverflow = createNumericGuard(() => form.phone, 11)
 const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
+
+// 🔴 AQUI — computeds pro contador de caracteres exibido no template
+const nameCharCount = computed(() => form.name.length)
+const emailCharCount = computed(() => form.email.length)
 </script>
 
 <template>
@@ -199,16 +217,35 @@ const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
           label="Nome"
           :icon="User"
           placeholder="Nome completo"
-          maxlength="100"
+          :maxlength="NAME_MAX_LENGTH"
           @keydown="blockNameOverflow"
           @input="sanitizeNameLength"
         />
-        <span v-if="fieldErrors.name" class="text-xs text-red-600">{{ fieldErrors.name[0] }}</span>
+        <div class="flex items-center justify-between">
+          <span v-if="fieldErrors.name" class="text-xs text-red-600">{{ fieldErrors.name[0] }}</span>
+          <span v-else></span>
+          <!-- 🔴 AQUI — contador de caracteres do nome -->
+          <span
+            class="text-xs"
+            :class="nameCharCount >= NAME_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
+          >
+            {{ nameCharCount }}/{{ NAME_MAX_LENGTH }}
+          </span>
+        </div>
       </div>
 
       <div class="flex flex-col gap-1.5">
         <div class="relative">
-          <BaseInput v-model="form.email" label="E-mail" type="email" :icon="Mail" placeholder="pessoa@exemplo.com" />
+          <BaseInput
+            v-model="form.email"
+            label="E-mail"
+            type="email"
+            :icon="Mail"
+            placeholder="pessoa@exemplo.com"
+            :maxlength="EMAIL_MAX_LENGTH"
+            @keydown="blockEmailOverflow"
+            @input="sanitizeEmailLength"
+          />
           <Loader2
             v-if="isChecking"
             :size="16"
@@ -220,9 +257,19 @@ const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
             class="absolute right-3 top-9 text-green-500"
           />
         </div>
-        <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
-        <span v-else-if="isValid === false" class="text-xs text-red-600">{{ errorMessage }}</span>
-        <span v-else-if="isValid === true" class="text-xs text-green-600">E-mail válido</span>
+        <div class="flex items-center justify-between">
+          <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
+          <span v-else-if="isValid === false" class="text-xs text-red-600">{{ errorMessage }}</span>
+          <span v-else-if="isValid === true" class="text-xs text-green-600">E-mail válido</span>
+          <span v-else></span>
+          <!-- 🔴 AQUI — contador de caracteres do email -->
+          <span
+            class="text-xs"
+            :class="emailCharCount >= EMAIL_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
+          >
+            {{ emailCharCount }}/{{ EMAIL_MAX_LENGTH }}
+          </span>
+        </div>
       </div>
 
       <div class="flex flex-col gap-1.5">
