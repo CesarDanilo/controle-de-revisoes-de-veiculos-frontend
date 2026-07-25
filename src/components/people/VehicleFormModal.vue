@@ -139,7 +139,7 @@ const saveNewBrand = async () => {
     toast.success('Marca cadastrada com sucesso!')
     cancelBrandCreation()
   } catch (error) {
-    const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível cadastrar a marca.'
+    const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Já existe um cadastro para essa marca!'
     toast.error(message)
   } finally {
     isSavingBrand.value = false
