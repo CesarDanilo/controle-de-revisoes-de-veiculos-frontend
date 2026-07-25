@@ -1,11 +1,11 @@
 <script setup>
 import { reactive, ref, computed, watch } from 'vue'
-import { User, Mail, Phone, IdCard, Calendar, Loader2, CheckCircle2 } from '@lucide/vue'
+import { User, Mail, Phone, IdCard, Loader2, CheckCircle2, Building2 } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import { personSchema } from '../../schemas/person.schema'
-import { maskPhone, maskCPF } from '../../utils/masks'
+import { maskPhone, maskCPF, maskCNPJ } from '../../utils/masks'
 import { useToast } from '../../composables/useToast'
 import { useEmailValidation } from '../../composables/useEmailValidation'
 
@@ -19,27 +19,31 @@ const toast = useToast()
 
 const isEditing = !!props.person
 
-// 🔴 AQUI — limites centralizados, facilita manutenção
 const NAME_MAX_LENGTH = 100
 const EMAIL_MAX_LENGTH = 100
+
+// 🔴 AQUI — tipo de pessoa, controlado manualmente. No modo edição,
+// detecta o tipo inicial pelo tamanho do documento salvo
+const personType = ref(
+  props.person?.document && props.person.document.replace(/\D/g, '').length === 14
+    ? 'PJ'
+    : 'PF'
+)
 
 const form = reactive({
   name: props.person?.name ?? '',
   email: props.person?.email ?? '',
-  phone: props.person?.phone ?? '',       // guarda só dígitos
-  document: props.person?.document ?? '', // guarda só dígitos
-  birth_date: props.person?.birth_date ?? '',
-  gender: props.person?.gender ?? '',
+  phone: props.person?.phone ?? '',
+  document: props.person?.document ?? '',
+  gender: props.person?.gender ?? 'O',
 })
 
-// ---------- snapshot original (só relevante no modo edição) ----------
 const originalSnapshot = isEditing
   ? {
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone,
       document: form.document,
-      birth_date: form.birth_date,
       gender: form.gender,
     }
   : null
@@ -50,19 +54,16 @@ function buildComparablePayload() {
     email: form.email.trim(),
     phone: form.phone,
     document: form.document,
-    birth_date: form.birth_date,
     gender: form.gender,
   }
 }
 
 function hasChanges() {
   if (!originalSnapshot) return true
-
   const current = buildComparablePayload()
   return Object.keys(current).some((key) => current[key] !== originalSnapshot[key])
 }
 
-// ---------- computeds ligados ao v-model dos inputs ----------
 const phoneModel = computed({
   get: () => maskPhone(form.phone),
   set: (val) => {
@@ -70,28 +71,41 @@ const phoneModel = computed({
   },
 })
 
+// 🔴 AQUI — troca de tipo limpa o documento (evita máscara errada com dígitos do outro tipo)
+function selectPersonType(type) {
+  if (personType.value === type) return
+  personType.value = type
+  form.document = ''
+  fieldErrors.value.document = undefined
+}
+
+const DOCUMENT_MAX_LENGTH = computed(() => (personType.value === 'PJ' ? 14 : 11))
+
+// 🔴 AQUI — usa as máscaras reais do masks.js, alternando conforme o toggle
 const documentModel = computed({
-  get: () => maskCPF(form.document),
+  get: () => (personType.value === 'PJ' ? maskCNPJ(form.document) : maskCPF(form.document)),
   set: (val) => {
-    form.document = val.replace(/\D/g, '').slice(0, 11)
+    form.document = val.replace(/\D/g, '').slice(0, DOCUMENT_MAX_LENGTH.value)
   },
 })
+
+const documentLabel = computed(() => (personType.value === 'PJ' ? 'CNPJ' : 'CPF'))
+const documentPlaceholder = computed(() =>
+  personType.value === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'
+)
 
 const fieldErrors = ref({})
 const isSubmitting = ref(false)
 
-// ---------- validação de email via Abstract API ----------
 const { isChecking, isValid, errorMessage, checkEmail, checkEmailDebounced } = useEmailValidation()
 
 watch(
   () => form.email,
   (newEmail) => {
-    // no modo edição, se o email não mudou em relação ao original, não gasta cota de API
     if (isEditing && newEmail.trim() === originalSnapshot.email) {
       isValid.value = null
       return
     }
-
     const trimmed = newEmail.trim()
     if (trimmed.length > 5) {
       checkEmailDebounced(trimmed)
@@ -109,21 +123,32 @@ const handleSubmit = async () => {
     return
   }
 
+  // 🔴 AQUI — garante que o tamanho do documento bate com o tipo selecionado no toggle
+  const documentDigits = form.document.replace(/\D/g, '')
+  const expectedLength = personType.value === 'PJ' ? 14 : 11
+  if (documentDigits.length !== expectedLength) {
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      document: [
+        personType.value === 'PJ'
+          ? 'Informe um CNPJ completo (14 dígitos).'
+          : 'Informe um CPF completo (11 dígitos).',
+      ],
+    }
+    return
+  }
+
   fieldErrors.value = {}
 
-  // --- modo edição: só faz o request se algo realmente mudou ---
   if (isEditing && !hasChanges()) {
     toast.info('Nenhuma alteração foi feita.')
     return
   }
 
-  // --- validação final de email antes de enviar ---
   const emailUnchanged = isEditing && form.email.trim() === originalSnapshot.email
 
   if (!emailUnchanged) {
-    // garante que a checagem mais recente terminou antes do submit
     await checkEmail(form.email.trim())
-
     if (isValid.value === false) {
       toast.error(errorMessage.value || 'Corrija o e-mail antes de continuar.')
       return
@@ -137,6 +162,63 @@ const handleSubmit = async () => {
     isSubmitting.value = false
   }
 }
+
+function createLengthGuard(getValue, maxLength) {
+  return function (e) {
+    const controlKeys = [
+      'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+      'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+    ]
+    if (controlKeys.includes(e.key)) return
+    if (e.ctrlKey || e.metaKey) return
+    if (e.key.length > 1) return
+
+    const target = e.target
+    const hasSelection = target.selectionStart !== target.selectionEnd
+    if (hasSelection) return
+
+    if (getValue().length >= maxLength) {
+      e.preventDefault()
+    }
+  }
+}
+
+function blockDocumentOverflow(e) {
+  const controlKeys = [
+    'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
+  ]
+  if (controlKeys.includes(e.key)) return
+  if (e.ctrlKey || e.metaKey) return
+
+  if (!/^\d$/.test(e.key)) {
+    e.preventDefault()
+    return
+  }
+
+  const target = e.target
+  const hasSelection = target.selectionStart !== target.selectionEnd
+  if (hasSelection) return
+
+  if (form.document.length >= DOCUMENT_MAX_LENGTH.value) {
+    e.preventDefault()
+  }
+}
+
+const sanitizeNameLength = () => {
+  if (form.name.length > NAME_MAX_LENGTH) {
+    form.name = form.name.slice(0, NAME_MAX_LENGTH)
+  }
+}
+
+const sanitizeEmailLength = () => {
+  if (form.email.length > EMAIL_MAX_LENGTH) {
+    form.email = form.email.slice(0, EMAIL_MAX_LENGTH)
+  }
+}
+
+const blockNameOverflow = createLengthGuard(() => form.name, NAME_MAX_LENGTH)
+const blockEmailOverflow = createLengthGuard(() => form.email, EMAIL_MAX_LENGTH)
 
 function createNumericGuard(getRawValue, maxLength) {
   return function (e) {
@@ -162,48 +244,8 @@ function createNumericGuard(getRawValue, maxLength) {
   }
 }
 
-function createLengthGuard(getValue, maxLength) {
-  return function (e) {
-    const controlKeys = [
-      'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
-      'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
-    ]
-    if (controlKeys.includes(e.key)) return
-    if (e.ctrlKey || e.metaKey) return
-    if (e.key.length > 1) return
-
-    const target = e.target
-    const hasSelection = target.selectionStart !== target.selectionEnd
-    if (hasSelection) return
-
-    if (getValue().length >= maxLength) {
-      e.preventDefault()
-    }
-  }
-}
-
-const sanitizeNameLength = () => {
-  if (form.name.length > NAME_MAX_LENGTH) {
-    form.name = form.name.slice(0, NAME_MAX_LENGTH)
-  }
-}
-
-// 🔴 AQUI — sanitização de overflow pro email (cobre paste de texto grande)
-const sanitizeEmailLength = () => {
-  if (form.email.length > EMAIL_MAX_LENGTH) {
-    form.email = form.email.slice(0, EMAIL_MAX_LENGTH)
-  }
-}
-
-const blockNameOverflow = createLengthGuard(() => form.name, NAME_MAX_LENGTH)
-
-// 🔴 AQUI — bloqueio de digitação pro email ao atingir o limite
-const blockEmailOverflow = createLengthGuard(() => form.email, EMAIL_MAX_LENGTH)
-
 const blockPhoneOverflow = createNumericGuard(() => form.phone, 11)
-const blockDocumentOverflow = createNumericGuard(() => form.document, 11)
 
-// 🔴 AQUI — computeds pro contador de caracteres exibido no template
 const nameCharCount = computed(() => form.name.length)
 const emailCharCount = computed(() => form.email.length)
 </script>
@@ -212,11 +254,39 @@ const emailCharCount = computed(() => form.email.length)
   <BaseModal :title="isEditing ? 'Editar pessoa' : 'Nova pessoa'" @close="emit('close')">
     <form class="flex flex-col gap-4" @submit.prevent="handleSubmit" novalidate>
       <div class="flex flex-col gap-1.5">
+        <label class="text-sm font-medium text-ink-700">Tipo de cadastro</label>
+        <div class="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            class="flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors"
+            :class="personType === 'PF'
+              ? 'border-brand-500 bg-brand-50 text-brand-700'
+              : 'border-surface-border bg-white text-ink-500 hover:bg-ink-50'"
+            @click="selectPersonType('PF')"
+          >
+            <User :size="16" />
+            Pessoa Física
+          </button>
+          <button
+            type="button"
+            class="flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition-colors"
+            :class="personType === 'PJ'
+              ? 'border-brand-500 bg-brand-50 text-brand-700'
+              : 'border-surface-border bg-white text-ink-500 hover:bg-ink-50'"
+            @click="selectPersonType('PJ')"
+          >
+            <Building2 :size="16" />
+            Pessoa Jurídica
+          </button>
+        </div>
+      </div>
+
+      <div class="flex flex-col gap-1.5">
         <BaseInput
           v-model="form.name"
-          label="Nome"
+          :label="personType === 'PJ' ? 'Razão social' : 'Nome'"
           :icon="User"
-          placeholder="Nome completo"
+          :placeholder="personType === 'PJ' ? 'Nome da empresa' : 'Nome completo'"
           :maxlength="NAME_MAX_LENGTH"
           @keydown="blockNameOverflow"
           @input="sanitizeNameLength"
@@ -224,7 +294,6 @@ const emailCharCount = computed(() => form.email.length)
         <div class="flex items-center justify-between">
           <span v-if="fieldErrors.name" class="text-xs text-red-600">{{ fieldErrors.name[0] }}</span>
           <span v-else></span>
-          <!-- 🔴 AQUI — contador de caracteres do nome -->
           <span
             class="text-xs"
             :class="nameCharCount >= NAME_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
@@ -262,7 +331,6 @@ const emailCharCount = computed(() => form.email.length)
           <span v-else-if="isValid === false" class="text-xs text-red-600">{{ errorMessage }}</span>
           <span v-else-if="isValid === true" class="text-xs text-green-600">E-mail válido</span>
           <span v-else></span>
-          <!-- 🔴 AQUI — contador de caracteres do email -->
           <span
             class="text-xs"
             :class="emailCharCount >= EMAIL_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
@@ -288,38 +356,14 @@ const emailCharCount = computed(() => form.email.length)
       <div class="flex flex-col gap-1.5">
         <BaseInput
           v-model="documentModel"
-          label="CPF"
+          :label="documentLabel"
           :icon="IdCard"
-          placeholder="000.000.000-00"
+          :placeholder="documentPlaceholder"
           inputmode="numeric"
-          maxlength=14
+          :maxlength="personType === 'PJ' ? 18 : 14"
           @keydown="blockDocumentOverflow"
         />
         <span v-if="fieldErrors.document" class="text-xs text-red-600">{{ fieldErrors.document[0] }}</span>
-      </div>
-
-      <div class="flex flex-col gap-1.5">
-        <BaseInput
-          v-model="form.birth_date"
-          label="Data de nascimento"
-          type="date"
-          :icon="Calendar"
-        />
-        <span v-if="fieldErrors.birth_date" class="text-xs text-red-600">{{ fieldErrors.birth_date[0] }}</span>
-      </div>
-
-      <div class="flex flex-col gap-1.5">
-        <label class="text-sm font-medium text-ink-700">Gênero</label>
-        <select
-          v-model="form.gender"
-          class="rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-        >
-          <option value="" disabled>Selecione</option>
-          <option value="M">Masculino</option>
-          <option value="F">Feminino</option>
-          <option value="O">Outro</option>
-        </select>
-        <span v-if="fieldErrors.gender" class="text-xs text-red-600">{{ fieldErrors.gender[0] }}</span>
       </div>
 
       <div class="mt-2 flex justify-end gap-3">

@@ -10,7 +10,7 @@ import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import RevisionsModal from '../components/people/RevisionsModal.vue'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
-import { maskPhone, maskCPF, blockNonNumericKey } from '../utils/masks'
+import { maskPhone, maskDocument, blockNonNumericKey } from '../utils/masks'
 import { translateApiError } from '../utils/apiErrors'
 
 const { people, isLoading, errorMessage, fetchPeople, createPerson, updatePerson, deletePerson } =
@@ -305,7 +305,7 @@ const sanitizeNumericFilter = (field) => {
               </div>
               <div class="flex items-center gap-1.5">
                 <IdCard :size="12" class="shrink-0 text-ink-300" />
-                <span class="truncate">{{ maskCPF(person.document) || '—' }}</span>
+                <span class="truncate">{{ maskDocument(person.document) || '—' }}</span>
               </div>
             </div>
 
@@ -375,7 +375,7 @@ const sanitizeNumericFilter = (field) => {
                   </td>
                   <td class="px-5 py-3.5 text-ink-500">{{ person.email || '—' }}</td>
                   <td class="px-5 py-3.5 text-ink-500">{{ maskPhone(person.phone) || '—' }}</td>
-                  <td class="px-5 py-3.5 text-ink-500">{{ maskCPF(person.document) || '—' }}</td>
+                  <td class="px-5 py-3.5 text-ink-500">{{ maskDocument(person.document) || '—' }}</td>
                   <td class="px-5 py-3.5">
                     <div class="flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                       <button

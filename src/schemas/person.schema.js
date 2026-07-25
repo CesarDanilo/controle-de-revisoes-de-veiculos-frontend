@@ -1,21 +1,8 @@
 import { z } from 'zod'
 import { parse as parseDomain } from 'tldts'
+import { isValidDocument } from '../utils/validators'
 
 const emailFormatRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,24}$/
-
-const MAX_AGE = 130
-
-function calculateAge(birthDate) {
-  const today = new Date()
-  let age = today.getFullYear() - birthDate.getFullYear()
-  const monthDiff = today.getMonth() - birthDate.getMonth()
-
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
-    age--
-  }
-
-  return age
-}
 
 export const personSchema = z.object({
   name: z
@@ -43,28 +30,16 @@ export const personSchema = z.object({
       message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).',
     }),
 
+  // 🔴 AQUI — aceita CPF (11) ou CNPJ (14), validando o dígito verificador certo
   document: z
     .string()
-    .min(1, 'Informe o CPF.')
-    .min(11, 'CPF inválido.'),
-
-    birth_date: z
-    .string()
-    .min(1, 'Informe a data de nascimento.')
-    .refine((val) => !isNaN(Date.parse(val)), {
-      message: 'Data de nascimento inválida.',
+    .min(1, 'Informe o documento.')
+    .transform((val) => val.replace(/\D/g, ''))
+    .refine((val) => val.length === 11 || val.length === 14, {
+      message: 'Documento deve ter 11 dígitos (CPF) ou 14 dígitos (CNPJ).',
     })
-    .refine((val) => new Date(val) <= new Date(), {
-      message: 'A data de nascimento não pode ser no futuro.',
-    })
-    .superRefine((val, ctx) => {
-      const age = calculateAge(new Date(val))
-      if (age > MAX_AGE) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `Essa data indica ${age} anos. Insira outra data!.`,
-        })
-      }
+    .refine((val) => isValidDocument(val), {
+      message: 'Documento inválido. Confira os números digitados.',
     }),
 
   gender: z
