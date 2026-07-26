@@ -36,7 +36,6 @@ const form = reactive({
   phone: props.person?.phone ?? '',
   document: props.person?.document ?? '',
   gender: props.person?.gender ?? 'O',
-  // 🔴 AQUI — data de nascimento, aplicável apenas a Pessoa Física
   birthDate: props.person?.birthDate ?? '',
 })
 
