@@ -5,7 +5,7 @@ import { isValidDocument } from '../utils/validators'
 const emailFormatRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,24}$/
 const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/
 
-// 🔴 AQUI — limite máximo de idade aceito, usado só pra pegar erro de digitação grosseiro
+// limite máximo de idade aceito, usado só pra pegar erro de digitação grosseiro
 const MAX_AGE_YEARS = 120
 
 export const personSchema = z
@@ -35,7 +35,7 @@ export const personSchema = z
         message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).',
       }),
 
-    // 🔴 AQUI — aceita CPF (11) ou CNPJ (14), validando o dígito verificador certo
+    // aceita CPF (11) ou CNPJ (14), validando o dígito verificador certo
     document: z
       .string()
       .min(1, 'Informe o documento.')
@@ -52,10 +52,10 @@ export const personSchema = z
         error: () => ({ message: 'Selecione um gênero.' }),
       }),
 
-    // 🔴 AQUI — obrigatória apenas para Pessoa Física (CPF, 11 dígitos).
+    // obrigatória apenas para Pessoa Física (CPF, 11 dígitos).
     // Fica opcional/nula aqui no shape porque a obrigatoriedade real
     // é resolvida no superRefine, já com o tipo de documento em mãos.
-    birthDate: z
+    birth_date: z
       .string()
       .optional()
       .nullable(),
@@ -66,31 +66,31 @@ export const personSchema = z
     // Pessoa Jurídica não usa data de nascimento — ignora o campo silenciosamente
     if (!isPessoaFisica) return
 
-    if (!data.birthDate) {
+    if (!data.birth_date) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['birthDate'],
+        path: ['birth_date'],
         message: 'Informe a data de nascimento.',
       })
       return
     }
 
-    if (!isoDateRegex.test(data.birthDate)) {
+    if (!isoDateRegex.test(data.birth_date)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['birthDate'],
+        path: ['birth_date'],
         message: 'Informe uma data de nascimento válida.',
       })
       return
     }
 
-    const birth = new Date(`${data.birthDate}T00:00:00`)
+    const birth = new Date(`${data.birth_date}T00:00:00`)
     const today = new Date()
 
     if (Number.isNaN(birth.getTime())) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['birthDate'],
+        path: ['birth_date'],
         message: 'Informe uma data de nascimento válida.',
       })
       return
@@ -99,7 +99,7 @@ export const personSchema = z
     if (birth > today) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['birthDate'],
+        path: ['birth_date'],
         message: 'A data de nascimento não pode ser no futuro.',
       })
       return
@@ -111,7 +111,7 @@ export const personSchema = z
     if (birth < maxAgeDate) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['birthDate'],
+        path: ['birth_date'],
         message: 'Data de nascimento inválida.',
       })
     }

@@ -22,8 +22,6 @@ const isEditing = !!props.person
 const NAME_MAX_LENGTH = 100
 const EMAIL_MAX_LENGTH = 100
 
-// 🔴 AQUI — tipo de pessoa, controlado manualmente. No modo edição,
-// detecta o tipo inicial pelo tamanho do documento salvo
 const personType = ref(
   props.person?.document && props.person.document.replace(/\D/g, '').length === 14
     ? 'PJ'
@@ -36,7 +34,7 @@ const form = reactive({
   phone: props.person?.phone ?? '',
   document: props.person?.document ?? '',
   gender: props.person?.gender ?? 'O',
-  birthDate: props.person?.birthDate ?? '',
+  birth_date: props.person?.birth_date ?? '',
 })
 
 const originalSnapshot = isEditing
@@ -46,7 +44,7 @@ const originalSnapshot = isEditing
       phone: form.phone,
       document: form.document,
       gender: form.gender,
-      birthDate: form.birthDate,
+      birth_date: form.birth_date,
     }
   : null
 
@@ -57,7 +55,7 @@ function buildComparablePayload() {
     phone: form.phone,
     document: form.document,
     gender: form.gender,
-    birthDate: personType.value === 'PF' ? form.birthDate : '',
+    birth_date: personType.value === 'PF' ? form.birth_date : '',
   }
 }
 
@@ -74,22 +72,31 @@ const phoneModel = computed({
   },
 })
 
-// 🔴 AQUI — troca de tipo limpa o documento (evita máscara errada com dígitos do outro tipo)
-// e limpa a data de nascimento ao mudar para Pessoa Jurídica (campo não se aplica)
 function selectPersonType(type) {
   if (personType.value === type) return
   personType.value = type
   form.document = ''
   fieldErrors.value.document = undefined
   if (type === 'PJ') {
-    form.birthDate = ''
-    fieldErrors.value.birthDate = undefined
+    form.birth_date = ''
+    fieldErrors.value.birth_date = undefined
   }
 }
 
+// seleção de gênero
+function selectGender(value) {
+  form.gender = value
+  fieldErrors.value.gender = undefined
+}
+
+const genderOptions = [
+  { value: 'M', label: 'Masculino' },
+  { value: 'F', label: 'Feminino' },
+  { value: 'O', label: 'Outro' },
+]
+
 const DOCUMENT_MAX_LENGTH = computed(() => (personType.value === 'PJ' ? 14 : 11))
 
-// 🔴 AQUI — usa as máscaras reais do masks.js, alternando conforme o toggle
 const documentModel = computed({
   get: () => (personType.value === 'PJ' ? maskCNPJ(form.document) : maskCPF(form.document)),
   set: (val) => {
@@ -102,7 +109,6 @@ const documentPlaceholder = computed(() =>
   personType.value === 'PJ' ? '00.000.000/0000-00' : '000.000.000-00'
 )
 
-// 🔴 AQUI — data máxima permitida é hoje (não deixa cadastrar nascimento no futuro)
 const todayISO = new Date().toISOString().split('T')[0]
 
 const fieldErrors = ref({})
@@ -127,8 +133,6 @@ watch(
 )
 
 const handleSubmit = async () => {
-  // 🔴 AQUI — validação de birthDate (obrigatória/formatos/limites) agora vive
-  // inteiramente no personSchema.superRefine, com base no tamanho do documento
   const result = personSchema.safeParse(form)
 
   if (!result.success) {
@@ -136,7 +140,6 @@ const handleSubmit = async () => {
     return
   }
 
-  // 🔴 AQUI — garante que o tamanho do documento bate com o tipo selecionado no toggle
   const documentDigits = form.document.replace(/\D/g, '')
   const expectedLength = personType.value === 'PJ' ? 14 : 11
   if (documentDigits.length !== expectedLength) {
@@ -172,7 +175,7 @@ const handleSubmit = async () => {
   try {
     const payload = {
       ...result.data,
-      birthDate: personType.value === 'PF' ? form.birthDate : null,
+      birth_date: personType.value === 'PF' ? form.birth_date : null,
     }
     await emit('submit', payload)
   } finally {
@@ -320,16 +323,34 @@ const emailCharCount = computed(() => form.email.length)
         </div>
       </div>
 
-      <!-- 🔴 AQUI — data de nascimento, exibida somente para Pessoa Física -->
+      <div class="flex flex-col gap-1.5">
+        <label class="text-sm font-medium text-ink-700">Gênero</label>
+        <div class="grid grid-cols-3 gap-2">
+          <button
+            v-for="option in genderOptions"
+            :key="option.value"
+            type="button"
+            class="rounded-xl border px-3 py-2 text-sm font-medium transition-colors"
+            :class="form.gender === option.value
+              ? 'border-brand-500 bg-brand-50 text-brand-700'
+              : 'border-surface-border bg-white text-ink-500 hover:bg-ink-50'"
+            @click="selectGender(option.value)"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+        <span v-if="fieldErrors.gender" class="text-xs text-red-600">{{ fieldErrors.gender[0] }}</span>
+      </div>
+
       <div v-if="personType === 'PF'" class="flex flex-col gap-1.5">
         <BaseInput
-          v-model="form.birthDate"
+          v-model="form.birth_date"
           label="Data de nascimento"
           type="date"
           :icon="Calendar"
           :max="todayISO"
         />
-        <span v-if="fieldErrors.birthDate" class="text-xs text-red-600">{{ fieldErrors.birthDate[0] }}</span>
+        <span v-if="fieldErrors.birth_date" class="text-xs text-red-600">{{ fieldErrors.birth_date[0] }}</span>
       </div>
 
       <div class="flex flex-col gap-1.5">
