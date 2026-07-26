@@ -40,6 +40,19 @@ const form = reactive({
   birth_date: props.person?.birth_date ?? '',
 })
 
+// ---- Guarda o documento digitado em cada aba (PF/PJ) para não perder ao alternar ----
+const documentByType = reactive({
+  PF: personType.value === 'PF' ? form.document : '',
+  PJ: personType.value === 'PJ' ? form.document : '',
+})
+
+// ---- Guarda os campos exclusivos de PF (data de nascimento e gênero) ----
+const pfFieldsCache = reactive({
+  birth_date: personType.value === 'PF' ? form.birth_date : '',
+  gender: personType.value === 'PF' ? form.gender : 'O',
+})
+// ------------------------------------------------------------------------------------
+
 const originalSnapshot = isEditing
   ? {
       name: form.name.trim(),
@@ -77,15 +90,30 @@ const phoneModel = computed({
 
 function selectPersonType(type) {
   if (personType.value === type) return
+
+  // salva o que estava digitado na aba que está sendo deixada
+  documentByType[personType.value] = form.document
+  if (personType.value === 'PF') {
+    pfFieldsCache.birth_date = form.birth_date
+    pfFieldsCache.gender = form.gender
+  }
+
   personType.value = type
-  form.document = ''
+
+  // restaura o que já tinha sido digitado nessa aba, se houver
+  form.document = documentByType[type] ?? ''
   fieldErrors.value.document = undefined
   resetCpfValidation()
+
   if (type === 'PJ') {
     form.birth_date = ''
     fieldErrors.value.birth_date = undefined
     form.gender = 'O'
     fieldErrors.value.gender = undefined
+  } else {
+    // voltando para PF: restaura o que estava salvo
+    form.birth_date = pfFieldsCache.birth_date
+    form.gender = pfFieldsCache.gender
   }
 }
 
@@ -106,6 +134,8 @@ const documentModel = computed({
   get: () => (personType.value === 'PJ' ? maskCNPJ(form.document) : maskCPF(form.document)),
   set: (val) => {
     form.document = val.replace(/\D/g, '').slice(0, DOCUMENT_MAX_LENGTH.value)
+    // mantém o cache sempre sincronizado com o que está sendo digitado
+    documentByType[personType.value] = form.document
   },
 })
 
