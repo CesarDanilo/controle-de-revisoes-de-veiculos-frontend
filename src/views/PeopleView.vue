@@ -355,7 +355,7 @@ const sanitizeNumericFilter = (field) => {
                   <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Nome</th>
                   <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">E-mail</th>
                   <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Telefone</th>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">CPF</th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">CPF/CNPJ</th>
                   <th class="px-5 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-ink-400">Ações</th>
                 </tr>
               </thead>

@@ -1,14 +1,27 @@
+const SPECIAL_PHONE_PREFIXES = ['0800', '0300', '0400', '0500', '0900']
+
 export function maskPhone(rawValue) {
-    const d = (rawValue ?? '').replace(/\D/g, '').slice(0, 11)
-    const ddd = d.slice(0, 2)
-    const rest = d.slice(2)
-  
-    if (d.length === 0) return ''
-    if (d.length <= 2) return `(${ddd}`
-    if (rest.length <= 4) return `(${ddd}) ${rest}`
-    if (d.length <= 10) return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`
-    return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`
+  const d = (rawValue ?? '').replace(/\D/g, '').slice(0, 11)
+
+  if (d.length === 0) return ''
+
+  // Números especiais: 0800 067 6010 (4-3-4, sempre 11 dígitos)
+  const prefix4 = d.slice(0, 4)
+  if (SPECIAL_PHONE_PREFIXES.includes(prefix4)) {
+    const rest = d.slice(4)
+    if (rest.length === 0) return prefix4
+    if (rest.length <= 3) return `${prefix4} ${rest}`
+    return `${prefix4} ${rest.slice(0, 3)} ${rest.slice(3, 7)}`
   }
+
+  const ddd = d.slice(0, 2)
+  const rest = d.slice(2)
+
+  if (d.length <= 2) return `(${ddd}`
+  if (rest.length <= 4) return `(${ddd}) ${rest}`
+  if (d.length <= 10) return `(${ddd}) ${rest.slice(0, 4)}-${rest.slice(4)}`
+  return `(${ddd}) ${rest.slice(0, 5)}-${rest.slice(5)}`
+}
   
 export function maskCPF(rawValue) {
   const d = (rawValue ?? '').replace(/\D/g, '').slice(0, 11)

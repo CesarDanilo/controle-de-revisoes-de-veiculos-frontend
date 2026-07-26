@@ -583,11 +583,11 @@ const emailCharCount = computed(() => form.email.length)
         </div>
 
         <div class="flex items-center justify-between">
-          <span v-if="fieldErrors.document" class="text-xs text-red-900">{{ fieldErrors.document[0] }}</span>
+          <span v-if="fieldErrors.document" class="text-xs text-red-600">{{ fieldErrors.document[0] }}</span>
           <span v-else-if="personType === 'PF' && cpfStatus === 'checking'" class="text-xs text-ink-400">
             Verificando CPF...
           </span>
-          <span v-else-if="personType === 'PF' && cpfStatus === 'invalid'" class="text-xs text-red-900">
+          <span v-else-if="personType === 'PF' && cpfStatus === 'invalid'" class="text-xs text-red-600">
             {{ cpfValidationMessage }}
           </span>
           <span v-else-if="personType === 'PF' && cpfStatus === 'error'" class="text-xs text-red-600">
