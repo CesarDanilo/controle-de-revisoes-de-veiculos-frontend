@@ -8,6 +8,7 @@ import { personSchema, emailSchema } from '../../schemas/person.schema'
 import { maskPhone, maskCPF, maskCNPJ } from '../../utils/masks'
 import { useToast } from '../../composables/useToast'
 import { useEmailValidation } from '../../composables/useEmailValidation'
+import { useCpfValidation } from '../../composables/useCpfValidation'
 
 const props = defineProps({
   person: { type: Object, default: null },
@@ -22,6 +23,7 @@ const isEditing = !!props.person
 const NAME_MAX_LENGTH = 100
 const EMAIL_MAX_LENGTH = 100
 const EMAIL_DEBOUNCE_MS = 700
+const CPF_DEBOUNCE_MS = 700
 
 const personType = ref(
   props.person?.document && props.person.document.replace(/\D/g, '').length === 14
@@ -78,6 +80,7 @@ function selectPersonType(type) {
   personType.value = type
   form.document = ''
   fieldErrors.value.document = undefined
+  resetCpfValidation()
   if (type === 'PJ') {
     form.birth_date = ''
     fieldErrors.value.birth_date = undefined
@@ -142,68 +145,42 @@ const isEmailVerified = computed(() => {
   return emailStatus.value === 'valid'
 })
 
-const isSubmitDisabled = computed(() => {
-  return isSubmitting.value || emailStatus.value === 'checking' || !isEmailVerified.value
-})
-
 const emailIconState = computed(() => {
   if (emailCheckSkippable.value) return 'valid'
   if (emailStatus.value === 'valid') return 'valid'
-  if (emailStatus.value === 'invalid') return 'invalid'
+  if (emailStatus.value === 'invalid' || emailStatus.value === 'error') return 'invalid'
   return null
 })
 
-// --- Debounce: valida automaticamente X ms depois que o usuário parar de digitar ---
 let emailDebounceTimer = null
 
 function runEmailValidation(rawEmail) {
-  console.log('[PersonModal] runEmailValidation disparado para:', rawEmail)
-
   if (emailCheckSkippable.value) {
-    console.log('[PersonModal] editando e email não mudou, pulando checagem')
     resetEmailValidation()
     return
   }
 
   const emailCheck = emailSchema.safeParse(rawEmail)
   if (!emailCheck.success) {
-    console.log('[PersonModal] formato de email inválido pelo Zod, não chama a API. Erro:', emailCheck.error?.issues)
     resetEmailValidation()
     return
   }
 
-  console.log('[PersonModal] formato válido, chamando checkEmail()')
   checkEmail(rawEmail)
 }
 
 watch(
   () => form.email,
   (newEmail) => {
-    console.log('[PersonModal] watch form.email disparado, novo valor:', newEmail)
-
-    // qualquer digitação nova invalida o resultado anterior imediatamente
     if (emailStatus.value !== 'idle') {
       resetEmailValidation()
     }
-
-    if (emailDebounceTimer) {
-      clearTimeout(emailDebounceTimer)
-    }
-
-    emailDebounceTimer = setTimeout(() => {
-      runEmailValidation(newEmail)
-    }, EMAIL_DEBOUNCE_MS)
+    if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
+    emailDebounceTimer = setTimeout(() => runEmailValidation(newEmail), EMAIL_DEBOUNCE_MS)
   }
 )
 
-onBeforeUnmount(() => {
-  if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
-})
-
-// Mantido como validação extra imediata ao sair do campo, caso o debounce
-// ainda não tenha disparado (ex: usuário digita e clica direto em Salvar)
 function handleEmailBlur() {
-  console.log('[PersonModal] handleEmailBlur disparado')
   if (emailDebounceTimer) {
     clearTimeout(emailDebounceTimer)
     emailDebounceTimer = null
@@ -211,6 +188,83 @@ function handleEmailBlur() {
   runEmailValidation(form.email)
 }
 // ------------------------------------------------
+
+// ---- Validação de CPF via CPFHub ----
+const {
+  status: cpfStatus,
+  message: cpfValidationMessage,
+  checkCpf,
+  reset: resetCpfValidation,
+} = useCpfValidation()
+
+const cpfCheckSkippable = computed(() => {
+  // só se aplica a Pessoa Física; PJ (CNPJ) não passa por essa validação
+  if (personType.value !== 'PF') return true
+  return isEditing && form.document === originalSnapshot?.document
+})
+
+// Bloqueia o submit apenas se a API confirmou que o CPF NÃO existe.
+// Se a API falhar (status 'error'), não bloqueia — só a validação mod-11 local vale.
+const isCpfVerified = computed(() => {
+  if (cpfCheckSkippable.value) return true
+  return cpfStatus.value !== 'invalid'
+})
+
+const cpfIconState = computed(() => {
+  if (personType.value !== 'PF') return null
+  if (cpfCheckSkippable.value) return 'valid'
+  if (cpfStatus.value === 'valid') return 'valid'
+  if (cpfStatus.value === 'invalid' || cpfStatus.value === 'error') return 'invalid'
+  return null
+})
+
+let cpfDebounceTimer = null
+
+function runCpfValidation(rawDocument) {
+  if (personType.value !== 'PF') return
+
+  if (cpfCheckSkippable.value) {
+    resetCpfValidation()
+    return
+  }
+
+  const digits = rawDocument.replace(/\D/g, '')
+  if (digits.length !== 11) {
+    resetCpfValidation()
+    return
+  }
+
+  checkCpf(digits)
+}
+
+watch(
+  () => form.document,
+  (newDocument) => {
+    if (personType.value !== 'PF') return
+
+    if (cpfStatus.value !== 'idle') {
+      resetCpfValidation()
+    }
+
+    if (cpfDebounceTimer) clearTimeout(cpfDebounceTimer)
+    cpfDebounceTimer = setTimeout(() => runCpfValidation(newDocument), CPF_DEBOUNCE_MS)
+  }
+)
+
+function handleDocumentBlur() {
+  if (personType.value !== 'PF') return
+  if (cpfDebounceTimer) {
+    clearTimeout(cpfDebounceTimer)
+    cpfDebounceTimer = null
+  }
+  runCpfValidation(form.document)
+}
+// ------------------------------------------------
+
+onBeforeUnmount(() => {
+  if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
+  if (cpfDebounceTimer) clearTimeout(cpfDebounceTimer)
+})
 
 const handleSubmit = async () => {
   const result = personSchema.safeParse(form)
@@ -242,6 +296,14 @@ const handleSubmit = async () => {
     return
   }
 
+  if (!isCpfVerified.value) {
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      document: [cpfValidationMessage.value || 'CPF não encontrado.'],
+    }
+    return
+  }
+
   fieldErrors.value = {}
 
   if (isEditing && !hasChanges()) {
@@ -262,6 +324,18 @@ const handleSubmit = async () => {
     isSubmitting.value = false
   }
 }
+
+// botão só libera se: não está enviando, email não está "checking",
+// email verificado, CPF não está "checking", e CPF verificado
+const isSubmitDisabled = computed(() => {
+  return (
+    isSubmitting.value ||
+    emailStatus.value === 'checking' ||
+    !isEmailVerified.value ||
+    cpfStatus.value === 'checking' ||
+    !isCpfVerified.value
+  )
+})
 
 function createLengthGuard(getValue, maxLength) {
   return function (e) {
@@ -452,34 +526,16 @@ const emailCharCount = computed(() => form.email.length)
             @input="sanitizeEmailLength"
             @blur="handleEmailBlur"
           />
-
           <span class="pointer-events-none absolute right-3 top-[38px]">
-            <Loader2
-              v-if="emailStatus === 'checking'"
-              :size="18"
-              class="animate-spin text-ink-400"
-            />
-            <CheckCircle2
-              v-else-if="emailIconState === 'valid'"
-              :size="18"
-              class="text-green-600"
-            />
-            <XCircle
-              v-else-if="emailIconState === 'invalid'"
-              :size="18"
-              class="text-red-600"
-            />
+            <Loader2 v-if="emailStatus === 'checking'" :size="18" class="animate-spin text-ink-400" />
+            <CheckCircle2 v-else-if="emailIconState === 'valid'" :size="18" class="text-green-600" />
+            <XCircle v-else-if="emailIconState === 'invalid'" :size="18" class="text-red-600" />
           </span>
         </div>
 
         <div class="flex items-center justify-between">
           <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
-          <span
-            v-else-if="emailStatus === 'checking'"
-            class="text-xs text-ink-400"
-          >
-            Verificando e-mail...
-          </span>
+          <span v-else-if="emailStatus === 'checking'" class="text-xs text-ink-400">Verificando e-mail...</span>
           <span v-else-if="emailStatus === 'invalid'" class="text-xs text-red-600">{{ emailValidationMessage }}</span>
           <span v-else-if="emailStatus === 'error'" class="text-xs text-amber-600">{{ emailValidationMessage }}</span>
           <span v-else-if="emailStatus === 'valid'" class="text-xs text-green-600">E-mail válido</span>
@@ -507,16 +563,41 @@ const emailCharCount = computed(() => form.email.length)
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <BaseInput
-          v-model="documentModel"
-          :label="documentLabel"
-          :icon="IdCard"
-          :placeholder="documentPlaceholder"
-          inputmode="numeric"
-          :maxlength="personType === 'PJ' ? 18 : 14"
-          @keydown="blockDocumentOverflow"
-        />
-        <span v-if="fieldErrors.document" class="text-xs text-red-600">{{ fieldErrors.document[0] }}</span>
+        <div class="relative">
+          <BaseInput
+            v-model="documentModel"
+            :label="documentLabel"
+            :icon="IdCard"
+            :placeholder="documentPlaceholder"
+            inputmode="numeric"
+            :maxlength="personType === 'PJ' ? 18 : 14"
+            :class="personType === 'PF' ? 'pr-9' : ''"
+            @keydown="blockDocumentOverflow"
+            @blur="handleDocumentBlur"
+          />
+          <span v-if="personType === 'PF'" class="pointer-events-none absolute right-3 top-[38px]">
+            <Loader2 v-if="cpfStatus === 'checking'" :size="18" class="animate-spin text-ink-400" />
+            <CheckCircle2 v-else-if="cpfIconState === 'valid'" :size="18" class="text-green-600" />
+            <XCircle v-else-if="cpfIconState === 'invalid'" :size="18" class="text-red-600" />
+          </span>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span v-if="fieldErrors.document" class="text-xs text-red-900">{{ fieldErrors.document[0] }}</span>
+          <span v-else-if="personType === 'PF' && cpfStatus === 'checking'" class="text-xs text-ink-400">
+            Verificando CPF...
+          </span>
+          <span v-else-if="personType === 'PF' && cpfStatus === 'invalid'" class="text-xs text-red-900">
+            {{ cpfValidationMessage }}
+          </span>
+          <span v-else-if="personType === 'PF' && cpfStatus === 'error'" class="text-xs text-red-600">
+            {{ cpfValidationMessage }}
+          </span>
+          <span v-else-if="personType === 'PF' && cpfStatus === 'valid'" class="text-xs text-green-600">
+            CPF válido
+          </span>
+          <span v-else></span>
+        </div>
       </div>
 
       <div class="mt-2 flex justify-end gap-3">
@@ -525,7 +606,7 @@ const emailCharCount = computed(() => form.email.length)
         </BaseButton>
         <BaseButton type="submit" :disabled="isSubmitDisabled">
           <span v-if="isSubmitting">Salvando...</span>
-          <span v-else-if="emailStatus === 'checking'">Verificando e-mail...</span>
+          <span v-else-if="emailStatus === 'checking' || cpfStatus === 'checking'">Verificando dados...</span>
           <span v-else>{{ isEditing ? 'Salvar alterações' : 'Cadastrar' }}</span>
         </BaseButton>
       </div>
