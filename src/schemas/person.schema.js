@@ -8,6 +8,20 @@ const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/
 // limite máximo de idade aceito, usado só pra pegar erro de digitação grosseiro
 const MAX_AGE_YEARS = 120
 
+// Extraído para uso isolado (ex: validação de blur antes do submit),
+// já que .superRefine() abaixo transforma o objeto em ZodEffects
+// e remove o acesso via personSchema.shape.email
+export const emailSchema = z
+  .string()
+  .min(1, 'Informe o e-mail.')
+  .max(254, 'E-mail muito longo.')
+  .regex(emailFormatRegex, 'Digite um e-mail válido.')
+  .refine((val) => {
+    const domain = val.split('@')[1] ?? ''
+    const parsed = parseDomain(domain)
+    return parsed.isIcann === true && !!parsed.publicSuffix
+  }, 'Digite um e-mail válido.')
+
 export const personSchema = z
   .object({
     name: z
@@ -16,16 +30,7 @@ export const personSchema = z
       .min(3, 'O nome deve ter pelo menos 3 caracteres.')
       .max(100, 'O nome deve ter no máximo 100 caracteres.'),
 
-    email: z
-      .string()
-      .min(1, 'Informe o e-mail.')
-      .max(254, 'E-mail muito longo.')
-      .regex(emailFormatRegex, 'Digite um e-mail válido.')
-      .refine((val) => {
-        const domain = val.split('@')[1] ?? ''
-        const parsed = parseDomain(domain)
-        return parsed.isIcann === true && !!parsed.publicSuffix
-      }, 'Digite um e-mail válido.'),
+    email: emailSchema,
 
     phone: z
       .string()
@@ -35,7 +40,6 @@ export const personSchema = z
         message: 'Telefone inválido. Informe DDD + número (10 ou 11 dígitos).',
       }),
 
-    // aceita CPF (11) ou CNPJ (14), validando o dígito verificador certo
     document: z
       .string()
       .min(1, 'Informe o documento.')
@@ -47,17 +51,11 @@ export const personSchema = z
         message: 'Documento inválido. Confira os números digitados.',
       }),
 
-    // obrigatório apenas para Pessoa Física (CPF, 11 dígitos).
-    // Fica opcional/nulo aqui no shape porque a obrigatoriedade real
-    // é resolvida no superRefine, já com o tipo de documento em mãos.
     gender: z
       .enum(['M', 'F', 'O'])
       .optional()
       .nullable(),
 
-    // obrigatória apenas para Pessoa Física (CPF, 11 dígitos).
-    // Fica opcional/nula aqui no shape porque a obrigatoriedade real
-    // é resolvida no superRefine, já com o tipo de documento em mãos.
     birth_date: z
       .string()
       .optional()
@@ -66,7 +64,6 @@ export const personSchema = z
   .superRefine((data, ctx) => {
     const isPessoaFisica = data.document.length === 11
 
-    // Pessoa Jurídica não usa gênero nem data de nascimento — ignora os campos silenciosamente
     if (!isPessoaFisica) return
 
     if (!data.gender) {

@@ -1,12 +1,13 @@
 <script setup>
-import { reactive, ref, computed } from 'vue'
-import { User, Mail, Phone, IdCard, Building2, Calendar } from '@lucide/vue'
+import { reactive, ref, computed, watch, onBeforeUnmount } from 'vue'
+import { User, Mail, Phone, IdCard, Building2, Calendar, Loader2, CheckCircle2, XCircle } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
-import { personSchema } from '../../schemas/person.schema'
+import { personSchema, emailSchema } from '../../schemas/person.schema'
 import { maskPhone, maskCPF, maskCNPJ } from '../../utils/masks'
 import { useToast } from '../../composables/useToast'
+import { useEmailValidation } from '../../composables/useEmailValidation'
 
 const props = defineProps({
   person: { type: Object, default: null },
@@ -20,6 +21,7 @@ const isEditing = !!props.person
 
 const NAME_MAX_LENGTH = 100
 const EMAIL_MAX_LENGTH = 100
+const EMAIL_DEBOUNCE_MS = 700
 
 const personType = ref(
   props.person?.document && props.person.document.replace(/\D/g, '').length === 14
@@ -123,6 +125,93 @@ const sanitizeBirthDateYear = () => {
 const fieldErrors = ref({})
 const isSubmitting = ref(false)
 
+// ---- Validação de e-mail via Abstract API ----
+const {
+  status: emailStatus,
+  message: emailValidationMessage,
+  checkEmail,
+  reset: resetEmailValidation,
+} = useEmailValidation()
+
+const emailCheckSkippable = computed(() => {
+  return isEditing && form.email.trim() === originalSnapshot?.email
+})
+
+const isEmailVerified = computed(() => {
+  if (emailCheckSkippable.value) return true
+  return emailStatus.value === 'valid'
+})
+
+const isSubmitDisabled = computed(() => {
+  return isSubmitting.value || emailStatus.value === 'checking' || !isEmailVerified.value
+})
+
+const emailIconState = computed(() => {
+  if (emailCheckSkippable.value) return 'valid'
+  if (emailStatus.value === 'valid') return 'valid'
+  if (emailStatus.value === 'invalid') return 'invalid'
+  return null
+})
+
+// --- Debounce: valida automaticamente X ms depois que o usuário parar de digitar ---
+let emailDebounceTimer = null
+
+function runEmailValidation(rawEmail) {
+  console.log('[PersonModal] runEmailValidation disparado para:', rawEmail)
+
+  if (emailCheckSkippable.value) {
+    console.log('[PersonModal] editando e email não mudou, pulando checagem')
+    resetEmailValidation()
+    return
+  }
+
+  const emailCheck = emailSchema.safeParse(rawEmail)
+  if (!emailCheck.success) {
+    console.log('[PersonModal] formato de email inválido pelo Zod, não chama a API. Erro:', emailCheck.error?.issues)
+    resetEmailValidation()
+    return
+  }
+
+  console.log('[PersonModal] formato válido, chamando checkEmail()')
+  checkEmail(rawEmail)
+}
+
+watch(
+  () => form.email,
+  (newEmail) => {
+    console.log('[PersonModal] watch form.email disparado, novo valor:', newEmail)
+
+    // qualquer digitação nova invalida o resultado anterior imediatamente
+    if (emailStatus.value !== 'idle') {
+      resetEmailValidation()
+    }
+
+    if (emailDebounceTimer) {
+      clearTimeout(emailDebounceTimer)
+    }
+
+    emailDebounceTimer = setTimeout(() => {
+      runEmailValidation(newEmail)
+    }, EMAIL_DEBOUNCE_MS)
+  }
+)
+
+onBeforeUnmount(() => {
+  if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
+})
+
+// Mantido como validação extra imediata ao sair do campo, caso o debounce
+// ainda não tenha disparado (ex: usuário digita e clica direto em Salvar)
+function handleEmailBlur() {
+  console.log('[PersonModal] handleEmailBlur disparado')
+  if (emailDebounceTimer) {
+    clearTimeout(emailDebounceTimer)
+    emailDebounceTimer = null
+  }
+  runEmailValidation(form.email)
+}
+// ------------------------------------------------
+
 const handleSubmit = async () => {
   const result = personSchema.safeParse(form)
 
@@ -141,6 +230,14 @@ const handleSubmit = async () => {
           ? 'Informe um CNPJ completo (14 dígitos).'
           : 'Informe um CPF completo (11 dígitos).',
       ],
+    }
+    return
+  }
+
+  if (!isEmailVerified.value) {
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      email: [emailValidationMessage.value || 'Aguarde a verificação do e-mail.'],
     }
     return
   }
@@ -168,7 +265,7 @@ const handleSubmit = async () => {
 
 function createLengthGuard(getValue, maxLength) {
   return function (e) {
-    if (!e.key) return   // 👈 nova guarda: ignora eventos sem key (autofill, IME, etc.)
+    if (!e.key) return
 
     const controlKeys = [
       'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
@@ -342,18 +439,50 @@ const emailCharCount = computed(() => form.email.length)
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <BaseInput
-          v-model="form.email"
-          label="E-mail"
-          type="email"
-          :icon="Mail"
-          placeholder="email@exemplo.com"
-          :maxlength="EMAIL_MAX_LENGTH"
-          @keydown="blockEmailOverflow"
-          @input="sanitizeEmailLength"
-        />
+        <div class="relative">
+          <BaseInput
+            v-model="form.email"
+            label="E-mail"
+            type="email"
+            :icon="Mail"
+            placeholder="email@exemplo.com"
+            :maxlength="EMAIL_MAX_LENGTH"
+            class="pr-9"
+            @keydown="blockEmailOverflow"
+            @input="sanitizeEmailLength"
+            @blur="handleEmailBlur"
+          />
+
+          <span class="pointer-events-none absolute right-3 top-[38px]">
+            <Loader2
+              v-if="emailStatus === 'checking'"
+              :size="18"
+              class="animate-spin text-ink-400"
+            />
+            <CheckCircle2
+              v-else-if="emailIconState === 'valid'"
+              :size="18"
+              class="text-green-600"
+            />
+            <XCircle
+              v-else-if="emailIconState === 'invalid'"
+              :size="18"
+              class="text-red-600"
+            />
+          </span>
+        </div>
+
         <div class="flex items-center justify-between">
           <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
+          <span
+            v-else-if="emailStatus === 'checking'"
+            class="text-xs text-ink-400"
+          >
+            Verificando e-mail...
+          </span>
+          <span v-else-if="emailStatus === 'invalid'" class="text-xs text-red-600">{{ emailValidationMessage }}</span>
+          <span v-else-if="emailStatus === 'error'" class="text-xs text-amber-600">{{ emailValidationMessage }}</span>
+          <span v-else-if="emailStatus === 'valid'" class="text-xs text-green-600">E-mail válido</span>
           <span v-else></span>
           <span
             class="text-xs"
@@ -394,8 +523,10 @@ const emailCharCount = computed(() => form.email.length)
         <BaseButton type="button" variant="ghost" @click="emit('close')">
           Cancelar
         </BaseButton>
-        <BaseButton type="submit" :disabled="isSubmitting">
-          {{ isSubmitting ? 'Salvando...' : isEditing ? 'Salvar alterações' : 'Cadastrar' }}
+        <BaseButton type="submit" :disabled="isSubmitDisabled">
+          <span v-if="isSubmitting">Salvando...</span>
+          <span v-else-if="emailStatus === 'checking'">Verificando e-mail...</span>
+          <span v-else>{{ isEditing ? 'Salvar alterações' : 'Cadastrar' }}</span>
         </BaseButton>
       </div>
     </form>
