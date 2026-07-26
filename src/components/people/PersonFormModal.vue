@@ -53,7 +53,7 @@ function buildComparablePayload() {
     email: form.email.trim(),
     phone: form.phone,
     document: form.document,
-    gender: form.gender,
+    gender: personType.value === 'PF' ? form.gender : null,
     birth_date: personType.value === 'PF' ? form.birth_date : '',
   }
 }
@@ -79,6 +79,8 @@ function selectPersonType(type) {
   if (type === 'PJ') {
     form.birth_date = ''
     fieldErrors.value.birth_date = undefined
+    form.gender = 'O'
+    fieldErrors.value.gender = undefined
   }
 }
 
@@ -154,6 +156,8 @@ const handleSubmit = async () => {
   try {
     const payload = {
       ...result.data,
+      person_type: personType.value,
+      gender: personType.value === 'PF' ? form.gender : null,
       birth_date: personType.value === 'PF' ? form.birth_date : null,
     }
     await emit('submit', payload)
@@ -306,7 +310,7 @@ const emailCharCount = computed(() => form.email.length)
         </div>
       </div>
 
-      <div class="flex flex-col gap-1.5">
+      <div v-if="personType === 'PF'" class="flex flex-col gap-1.5">
         <label class="text-sm font-medium text-ink-700">Gênero</label>
         <div class="grid grid-cols-3 gap-2">
           <button
@@ -396,4 +400,4 @@ const emailCharCount = computed(() => form.email.length)
       </div>
     </form>
   </BaseModal>
-</template> 
+</template>

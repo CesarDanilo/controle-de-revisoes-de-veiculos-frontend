@@ -3,7 +3,7 @@
 // 🔴 Mapa de mensagens conhecidas do backend (Laravel) para mensagens amigáveis em PT-BR
 const KNOWN_ERROR_MESSAGES = {
   'The email has already been taken.': 'Este email já pertence a outro usuário.',
-  'The document has already been taken.': 'Este CPF já está cadastrado para outra pessoa.',
+  'The document has already been taken.': 'Este CPF/CNPJ já está cadastrado.',
   'The phone has already been taken.': 'Este telefone já está cadastrado para outra pessoa.',
 }
 

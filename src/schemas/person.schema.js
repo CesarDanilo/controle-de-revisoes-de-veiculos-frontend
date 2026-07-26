@@ -47,10 +47,13 @@ export const personSchema = z
         message: 'Documento inválido. Confira os números digitados.',
       }),
 
+    // obrigatório apenas para Pessoa Física (CPF, 11 dígitos).
+    // Fica opcional/nulo aqui no shape porque a obrigatoriedade real
+    // é resolvida no superRefine, já com o tipo de documento em mãos.
     gender: z
-      .enum(['M', 'F', 'O'], {
-        error: () => ({ message: 'Selecione um gênero.' }),
-      }),
+      .enum(['M', 'F', 'O'])
+      .optional()
+      .nullable(),
 
     // obrigatória apenas para Pessoa Física (CPF, 11 dígitos).
     // Fica opcional/nula aqui no shape porque a obrigatoriedade real
@@ -63,8 +66,16 @@ export const personSchema = z
   .superRefine((data, ctx) => {
     const isPessoaFisica = data.document.length === 11
 
-    // Pessoa Jurídica não usa data de nascimento — ignora o campo silenciosamente
+    // Pessoa Jurídica não usa gênero nem data de nascimento — ignora os campos silenciosamente
     if (!isPessoaFisica) return
+
+    if (!data.gender) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['gender'],
+        message: 'Selecione um gênero.',
+      })
+    }
 
     if (!data.birth_date) {
       ctx.addIssue({
