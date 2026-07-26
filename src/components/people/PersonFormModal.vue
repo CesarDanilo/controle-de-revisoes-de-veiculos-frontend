@@ -1,13 +1,12 @@
 <script setup>
-import { reactive, ref, computed, watch } from 'vue'
-import { User, Mail, Phone, IdCard, Loader2, CheckCircle2, Building2, Calendar } from '@lucide/vue'
+import { reactive, ref, computed } from 'vue'
+import { User, Mail, Phone, IdCard, Building2, Calendar } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import { personSchema } from '../../schemas/person.schema'
 import { maskPhone, maskCPF, maskCNPJ } from '../../utils/masks'
 import { useToast } from '../../composables/useToast'
-import { useEmailValidation } from '../../composables/useEmailValidation'
 
 const props = defineProps({
   person: { type: Object, default: null },
@@ -83,7 +82,6 @@ function selectPersonType(type) {
   }
 }
 
-// seleção de gênero
 function selectGender(value) {
   form.gender = value
   fieldErrors.value.gender = undefined
@@ -111,26 +109,17 @@ const documentPlaceholder = computed(() =>
 
 const todayISO = new Date().toISOString().split('T')[0]
 
+const sanitizeBirthDateYear = () => {
+  if (!form.birth_date) return
+  const [year, month, day] = form.birth_date.split('-')
+  if (year && year.length > 4) {
+    const fixedYear = year.slice(0, 4)
+    form.birth_date = [fixedYear, month, day].filter(Boolean).join('-')
+  }
+}
+
 const fieldErrors = ref({})
 const isSubmitting = ref(false)
-
-const { isChecking, isValid, errorMessage, checkEmail, checkEmailDebounced } = useEmailValidation()
-
-watch(
-  () => form.email,
-  (newEmail) => {
-    if (isEditing && newEmail.trim() === originalSnapshot.email) {
-      isValid.value = null
-      return
-    }
-    const trimmed = newEmail.trim()
-    if (trimmed.length > 5) {
-      checkEmailDebounced(trimmed)
-    } else {
-      isValid.value = null
-    }
-  }
-)
 
 const handleSubmit = async () => {
   const result = personSchema.safeParse(form)
@@ -161,16 +150,6 @@ const handleSubmit = async () => {
     return
   }
 
-  const emailUnchanged = isEditing && form.email.trim() === originalSnapshot.email
-
-  if (!emailUnchanged) {
-    await checkEmail(form.email.trim())
-    if (isValid.value === false) {
-      toast.error(errorMessage.value || 'Corrija o e-mail antes de continuar.')
-      return
-    }
-  }
-
   isSubmitting.value = true
   try {
     const payload = {
@@ -185,6 +164,8 @@ const handleSubmit = async () => {
 
 function createLengthGuard(getValue, maxLength) {
   return function (e) {
+    if (!e.key) return   // 👈 nova guarda: ignora eventos sem key (autofill, IME, etc.)
+
     const controlKeys = [
       'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
       'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
@@ -204,6 +185,7 @@ function createLengthGuard(getValue, maxLength) {
 }
 
 function blockDocumentOverflow(e) {
+  if (!e.key) return
   const controlKeys = [
     'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
     'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
@@ -242,6 +224,7 @@ const blockEmailOverflow = createLengthGuard(() => form.email, EMAIL_MAX_LENGTH)
 
 function createNumericGuard(getRawValue, maxLength) {
   return function (e) {
+    if (!e.key) return
     const controlKeys = [
       'Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight',
       'ArrowUp', 'ArrowDown', 'Home', 'End', 'Enter',
@@ -349,37 +332,24 @@ const emailCharCount = computed(() => form.email.length)
           type="date"
           :icon="Calendar"
           :max="todayISO"
+          @input="sanitizeBirthDateYear"
         />
         <span v-if="fieldErrors.birth_date" class="text-xs text-red-600">{{ fieldErrors.birth_date[0] }}</span>
       </div>
 
       <div class="flex flex-col gap-1.5">
-        <div class="relative">
-          <BaseInput
-            v-model="form.email"
-            label="E-mail"
-            type="email"
-            :icon="Mail"
-            placeholder="email@exemplo.com"
-            :maxlength="EMAIL_MAX_LENGTH"
-            @keydown="blockEmailOverflow"
-            @input="sanitizeEmailLength"
-          />
-          <Loader2
-            v-if="isChecking"
-            :size="16"
-            class="absolute right-3 top-9 animate-spin text-ink-300"
-          />
-          <CheckCircle2
-            v-else-if="isValid === true"
-            :size="16"
-            class="absolute right-3 top-9 text-green-500"
-          />
-        </div>
+        <BaseInput
+          v-model="form.email"
+          label="E-mail"
+          type="email"
+          :icon="Mail"
+          placeholder="email@exemplo.com"
+          :maxlength="EMAIL_MAX_LENGTH"
+          @keydown="blockEmailOverflow"
+          @input="sanitizeEmailLength"
+        />
         <div class="flex items-center justify-between">
           <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
-          <span v-else-if="isValid === false" class="text-xs text-red-600">{{ errorMessage }}</span>
-          <span v-else-if="isValid === true" class="text-xs text-green-600">E-mail válido</span>
           <span v-else></span>
           <span
             class="text-xs"
@@ -420,10 +390,10 @@ const emailCharCount = computed(() => form.email.length)
         <BaseButton type="button" variant="ghost" @click="emit('close')">
           Cancelar
         </BaseButton>
-        <BaseButton type="submit" :disabled="isSubmitting || isChecking">
+        <BaseButton type="submit" :disabled="isSubmitting">
           {{ isSubmitting ? 'Salvando...' : isEditing ? 'Salvar alterações' : 'Cadastrar' }}
         </BaseButton>
       </div>
     </form>
   </BaseModal>
-</template>
+</template> 
