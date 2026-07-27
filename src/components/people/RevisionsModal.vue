@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Car, Wrench, Plus, X, Loader2, AlertCircle, Pencil, Trash2, Check } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import { vehicleService } from '../../services/vehicle.service'
@@ -25,7 +25,18 @@ const editingRevisionId = ref(null)
 const isSubmitting = ref(false)
 const formError = ref('') // erros gerais/backend, não ligados a um campo específico
 
+// 🔴 AQUI — mapa de refs (uma por veículo), porque uma ref com nome fixo
+// dentro de um v-for é tratada pelo Vue como ARRAY, não como elemento único —
+// era por isso que o .focus() não funcionava antes
+const descriptionInputRefs = ref({})
+const setDescriptionInputRef = (vehicleId) => (el) => {
+  descriptionInputRefs.value[vehicleId] = el
+}
+
 const DESCRIPTION_MAX_LENGTH = 150
+
+// 🔴 AQUI — quantos anos no futuro a próxima revisão pode ser agendada
+const MAX_YEARS_AHEAD = 5
 
 const emptyFieldErrors = () => ({
   description: '',
@@ -55,6 +66,27 @@ const confirmingDeleteId = ref(null)
 const deletingRevisionId = ref(null)
 const deleteErrorByVehicle = reactive({})
 
+// ---------- data de hoje no fuso local (yyyy-mm-dd) ----------
+const todayISO = () => new Date().toLocaleDateString('sv-SE')
+
+// 🔴 AQUI — limites de data pros inputs type="date"
+// Data da revisão atual: não pode ser no futuro
+const maxRevisionDate = computed(() => todayISO())
+
+// Data da próxima revisão: não pode ser antes da revisão atual, nem muito distante no futuro
+const minNextRevisionDate = computed(() => {
+  if (!formData.revision_date) return undefined
+  const d = new Date(`${formData.revision_date}T00:00:00`)
+  d.setDate(d.getDate() + 1)
+  return d.toLocaleDateString('sv-SE')
+})
+
+const maxNextRevisionDate = computed(() => {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() + MAX_YEARS_AHEAD)
+  return d.toLocaleDateString('sv-SE')
+})
+
 // ---------- formatação de data (FIX timezone) ----------
 const formatDate = (dateStr) => {
   if (!dateStr) return '—'
@@ -73,8 +105,7 @@ const formatCurrency = (value) => {
 // ---------- isOverdue (FIX timezone) ----------
 const isOverdue = (dateStr) => {
   if (!dateStr) return false
-  const todayISO = new Date().toLocaleDateString('sv-SE') // yyyy-mm-dd no fuso local
-  return String(dateStr).slice(0, 10) < todayISO
+  return String(dateStr).slice(0, 10) < todayISO()
 }
 
 const sortRevisions = (list) =>
@@ -298,6 +329,24 @@ const loadAll = async () => {
   }
 }
 
+// 🔴 AQUI — chave que identifica "qual formulário está aberto e em qual modo"
+// Precisa incluir formMode/editingRevisionId porque trocar de criar -> editar
+// no MESMO veículo não muda openFormVehicleId, e o watch não disparia só com ele.
+const openFormKey = computed(() => {
+  if (openFormVehicleId.value === null) return null
+  return `${openFormVehicleId.value}:${formMode.value}:${editingRevisionId.value}`
+})
+
+// 🔴 AQUI — dispara o foco sempre que um formulário (novo ou edição) é aberto,
+// já rodando depois que o Vue atualiza o DOM (flush: 'post'), com uma folga
+// extra de tempo pra cobrir a transição do modal/formulário
+watch(openFormKey, (key) => {
+  if (key === null) return
+  setTimeout(() => {
+    descriptionInputRefs.value[openFormVehicleId.value]?.focus()
+  }, 80)
+}, { flush: 'post' })
+
 // Open the form fresh, for creating a new revision on this vehicle.
 const toggleForm = (vehicleId) => {
   if (openFormVehicleId.value === vehicleId && formMode.value === 'create') {
@@ -368,6 +417,10 @@ const submitRevision = async (vehicle) => {
   if (!formData.revision_date) {
     fieldErrors.revision_date = 'Informe a data em que a revisão atual foi realizada.'
     hasError = true
+  } else if (formData.revision_date > maxRevisionDate.value) {
+    // 🔴 AQUI — trava reforçada no JS, além do "max" do input
+    fieldErrors.revision_date = 'A data da revisão não pode ser no futuro.'
+    hasError = true
   }
   if (formData.cost === null || formData.cost === undefined || formData.cost === '') {
     fieldErrors.cost = 'Informe o custo do serviço. Se foi gratuito, informe 0,00.'
@@ -383,6 +436,13 @@ const submitRevision = async (vehicle) => {
   ) {
     fieldErrors.next_revision_date =
       'A data da próxima revisão deve ser posterior à data da revisão atual (não pode ser igual).'
+    hasError = true
+  } else if (
+    // 🔴 AQUI — não permite agendar a próxima revisão pra um futuro muito distante
+    formData.next_revision_date &&
+    formData.next_revision_date > maxNextRevisionDate.value
+  ) {
+    fieldErrors.next_revision_date = `A data da próxima revisão não pode ultrapassar ${MAX_YEARS_AHEAD} anos a partir de hoje.`
     hasError = true
   }
   if (
@@ -596,6 +656,7 @@ onMounted(loadAll)
                   </span>
                 </div>
                 <input
+                  :ref="setDescriptionInputRef(vehicle.id)"
                   v-model="formData.description"
                   type="text"
                   maxlength="150"
@@ -604,7 +665,6 @@ onMounted(loadAll)
                   :class="fieldErrors.description
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
                     : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
-                  autofocus
                   @input="fieldErrors.description = ''"
                 />
                 <p v-if="fieldErrors.description" class="mt-1 text-[11px] text-red-600" role="alert">
@@ -619,6 +679,7 @@ onMounted(loadAll)
                 <input
                   v-model="formData.revision_date"
                   type="date"
+                  :max="maxRevisionDate"
                   class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.revision_date
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
@@ -636,7 +697,7 @@ onMounted(loadAll)
                   v-model="kmModel"
                   type="text"
                   inputmode="numeric"
-                  placeholder="0"
+                  placeholder="Ex: 0 km"
                   class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
                   @keydown="blockKmOverflow"
                   @paste="blockKmPaste"
@@ -672,6 +733,8 @@ onMounted(loadAll)
                 <input
                   v-model="formData.next_revision_date"
                   type="date"
+                  :min="minNextRevisionDate"
+                  :max="maxNextRevisionDate"
                   class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.next_revision_date
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
@@ -681,6 +744,9 @@ onMounted(loadAll)
                 <p v-if="fieldErrors.next_revision_date" class="mt-1 text-[11px] text-red-600" role="alert">
                   {{ fieldErrors.next_revision_date }}
                 </p>
+                <p v-else class="mt-1 text-[11px] text-ink-400">
+                  Até {{ MAX_YEARS_AHEAD }} anos a partir de hoje.
+                </p>
               </div>
 
               <div>
@@ -689,7 +755,7 @@ onMounted(loadAll)
                   v-model="nextRevisionKmModel"
                   type="text"
                   inputmode="numeric"
-                  placeholder="0"
+                  placeholder="Ex: 0 km"
                   class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                   :class="fieldErrors.next_revision_km
                     ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
