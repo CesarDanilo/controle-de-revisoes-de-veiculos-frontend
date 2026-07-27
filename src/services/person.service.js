@@ -1,8 +1,8 @@
 import { api } from '../lib/api'
 
 export const personService = {
-  async list() {
-    const { data } = await api.get('/people')
+  async list(params = {}) {
+    const { data } = await api.get('/people', { params })
     return data
   },
 

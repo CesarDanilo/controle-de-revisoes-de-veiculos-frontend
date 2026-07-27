@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, watch } from 'vue'
 import { useQuery, useQueries } from '@tanstack/vue-query'
 import { Users, Car, Wrench, Wallet } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
@@ -12,22 +12,18 @@ import { useToast } from '../composables/useToast'
 import { vehicleService } from '../services/vehicle.service'
 import { revisionService } from '../services/revision.service'
 
-const { people, fetchPeople } = usePeople()
+// people agora vem do usePeople novo (Vue Query) - já expõe isLoading e
+// errorMessage próprios, então não precisamos mais de um ref manual nem
+// de chamar fetchPeople().catch(), que não existe mais nesse formato.
+const { people, isLoading: peopleLoading, errorMessage: peopleError, total: peopleTotal } = usePeople()
 const toast = useToast()
 
 const formatCurrency = (value) =>
   Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-// people continua vindo do seu composable original. Como ele não expõe um
-// estado de loading próprio, controlamos um ref local só pra isso.
-const peopleLoading = ref(true)
-fetchPeople()
-  .catch((error) => {
-    toast.error(error.response?.data?.message ?? 'Não foi possível carregar as pessoas.')
-  })
-  .finally(() => {
-    peopleLoading.value = false
-  })
+watch(peopleError, (message) => {
+  if (message) toast.error(message)
+})
 
 // Vehicles: cache do Vue Query
 const {
@@ -70,7 +66,9 @@ const isLoading = computed(
 const stats = computed(() => [
   {
     label: 'Pessoas',
-    value: String(people.value.length),
+    // usa o total real (vindo da paginação), não people.value.length,
+    // que agora é só os 10 itens da página atual.
+    value: String(peopleTotal.value),
     icon: Users,
     loading: peopleLoading.value,
   },
@@ -95,9 +93,9 @@ const stats = computed(() => [
   },
 ])
 
-if (vehiclesError.value) {
-  toast.error(vehiclesError.value.response?.data?.message ?? 'Não foi possível carregar os veículos.')
-}
+watch(vehiclesError, (err) => {
+  if (err) toast.error(err.response?.data?.message ?? 'Não foi possível carregar os veículos.')
+})
 </script>
 
 <template>

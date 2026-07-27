@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Users, Plus, Pencil, Trash2, Car, Wrench, Mail, Phone, IdCard, Search, X } from '@lucide/vue'
+import { Users, Plus, Pencil, Trash2, Car, Wrench, Mail, Phone, IdCard, Search, X, ChevronLeft, ChevronRight } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import EmptyState from '../components/dashboard/EmptyState.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -13,8 +13,21 @@ import { useToast } from '../composables/useToast'
 import { maskPhone, maskDocument, blockNonNumericKey } from '../utils/masks'
 import { translateApiError } from '../utils/apiErrors'
 
-const { people, isLoading, errorMessage, fetchPeople, createPerson, updatePerson, deletePerson } =
-  usePeople()
+const {
+  people,
+  isLoading,
+  errorMessage,
+  currentPage,
+  lastPage,
+  total,
+  perPage,
+  fetchPeople,
+  applyFilters,
+  clearFilters: clearFiltersRequest,
+  createPerson,
+  updatePerson,
+  deletePerson,
+} = usePeople()
 
 const toast = useToast()
 
@@ -32,42 +45,34 @@ const personForVehicle = ref(null)
 const isRevisionsModalOpen = ref(false)
 const personForRevisions = ref(null)
 
-// --- Filtros ---
-const filters = ref({
+// --- Filtros (agora buscam no backend, em todas as pessoas) ---
+// Ref local só pra ligação com os inputs (atualiza a UI na hora).
+// O envio real pro backend é debounced, pra não disparar uma request a cada tecla.
+const filterInputs = ref({
   name: '',
   email: '',
   phone: '',
   document: '',
 })
 
+let debounceTimer = null
+const DEBOUNCE_MS = 400
+
+const scheduleFilterUpdate = () => {
+  clearTimeout(debounceTimer)
+  debounceTimer = setTimeout(() => {
+    applyFilters({ ...filterInputs.value })
+  }, DEBOUNCE_MS)
+}
+
 const hasActiveFilters = computed(() =>
-  Object.values(filters.value).some((value) => value.trim() !== '')
+  Object.values(filterInputs.value).some((value) => value.trim() !== '')
 )
 
-const normalize = (value) =>
-  (value ?? '')
-    .toString()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-
-const filteredPeople = computed(() => {
-  const { name, email, phone, document } = filters.value
-
-  return people.value.filter((person) => {
-    const matchesName = name.trim() ? normalize(person.name).includes(normalize(name)) : true
-    const matchesEmail = email.trim() ? normalize(person.email).includes(normalize(email)) : true
-    const matchesPhone = phone.trim() ? normalize(person.phone).includes(normalize(phone)) : true
-    const matchesDocument = document.trim()
-      ? normalize(person.document).includes(normalize(document))
-      : true
-
-    return matchesName && matchesEmail && matchesPhone && matchesDocument
-  })
-})
-
-const clearFilters = () => {
-  filters.value = { name: '', email: '', phone: '', document: '' }
+const clearFilters = async () => {
+  clearTimeout(debounceTimer)
+  filterInputs.value = { name: '', email: '', phone: '', document: '' }
+  await clearFiltersRequest()
 }
 // --- fim filtros ---
 
@@ -83,7 +88,54 @@ const getInitials = (name) => {
 }
 // --- fim avatar ---
 
-onMounted(fetchPeople)
+onMounted(() => fetchPeople(1))
+
+// --- Paginação (mesmo estilo/lógica do DataTable.vue) ---
+const goToPage = (page) => {
+  if (
+    typeof page !== 'number' ||
+    page < 1 ||
+    page > lastPage.value ||
+    page === currentPage.value ||
+    isLoading.value
+  ) {
+    return
+  }
+  fetchPeople(page)
+}
+
+const rangeLabel = computed(() => {
+  if (!total.value) return ''
+  const from = (currentPage.value - 1) * perPage.value + 1
+  const to = Math.min(currentPage.value * perPage.value, total.value)
+  return `Mostrando ${from}–${to} de ${total.value}`
+})
+
+// Janela de páginas visíveis (máx. 5 números, com "…" nas pontas quando necessário)
+const visiblePages = computed(() => {
+  const delta = 1
+  const range = []
+  const withDots = []
+  let last = null
+
+  for (let i = 1; i <= lastPage.value; i++) {
+    if (i === 1 || i === lastPage.value || (i >= currentPage.value - delta && i <= currentPage.value + delta)) {
+      range.push(i)
+    }
+  }
+
+  for (const i of range) {
+    if (last !== null) {
+      if (i - last === 2) withDots.push(last + 1)
+      else if (i - last > 2) withDots.push('...')
+    }
+    withDots.push(i)
+    last = i
+  }
+
+  return withDots
+})
+// --- fim paginação ---
 
 const openNewPerson = () => {
   editingPerson.value = null
@@ -112,7 +164,6 @@ const handleSubmit = async (payload) => {
     }
     closeModal()
   } catch (error) {
-    // 🔴 AQUI — pega a mensagem crua da API e traduz pra algo legível
     const rawMessage = error.response?.data?.message ?? error.response?.data?.error
     const message = translateApiError(rawMessage, 'Não foi possível salvar a pessoa.')
     toast.error(message)
@@ -166,7 +217,6 @@ const closeRevisionsModal = () => {
   personForRevisions.value = null
 }
 
-// Fecha o modal de revisões e abre o de veículo para a mesma pessoa
 const goToVehicleRegistrationFromRevisions = () => {
   const person = personForRevisions.value
   closeRevisionsModal()
@@ -174,14 +224,15 @@ const goToVehicleRegistrationFromRevisions = () => {
 }
 
 const sanitizeNumericFilter = (field) => {
-  filters.value[field] = filters.value[field].replace(/\D/g, '').slice(0, 11)
+  filterInputs.value[field] = filterInputs.value[field].replace(/\D/g, '').slice(0, 11)
+  scheduleFilterUpdate()
 }
 </script>
 
 <template>
   <AppShell title="Proprietários" subtitle="Gerencie as pessoas cadastradas.">
     <template #actions>
-      <BaseButton v-if="people.length" class="w-full sm:w-auto" @click="openNewPerson">
+      <BaseButton v-if="people.length || hasActiveFilters" class="w-full sm:w-auto" @click="openNewPerson">
         <Plus :size="16" />
         Nova pessoa
       </BaseButton>
@@ -196,7 +247,7 @@ const sanitizeNumericFilter = (field) => {
     </div>
 
     <EmptyState
-      v-else-if="!people.length"
+      v-else-if="!people.length && !hasActiveFilters"
       :icon="Users"
       title="Nenhuma pessoa cadastrada"
       description="Cadastre uma pessoa para começar a vincular veículos e revisões."
@@ -213,25 +264,27 @@ const sanitizeNumericFilter = (field) => {
           <div class="relative">
             <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
-              v-model="filters.name"
+              v-model="filterInputs.name"
               type="text"
               placeholder="Filtrar por nome"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+              @input="scheduleFilterUpdate"
             />
           </div>
           <div class="relative">
             <Mail :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
-              v-model="filters.email"
+              v-model="filterInputs.email"
               type="text"
               placeholder="Filtrar por e-mail"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+              @input="scheduleFilterUpdate"
             />
           </div>
           <div class="relative">
             <Phone :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
-              v-model="filters.phone"
+              v-model="filterInputs.phone"
               type="text"
               placeholder="Filtrar por telefone"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
@@ -242,7 +295,7 @@ const sanitizeNumericFilter = (field) => {
           <div class="relative">
             <IdCard :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
-              v-model="filters.document"
+              v-model="filterInputs.document"
               type="text"
               placeholder="Filtrar por CPF"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
@@ -254,7 +307,7 @@ const sanitizeNumericFilter = (field) => {
 
         <div v-if="hasActiveFilters" class="mt-3 flex items-center justify-between">
           <span class="text-xs text-ink-500">
-            {{ filteredPeople.length }} de {{ people.length }} pessoa(s) encontrada(s)
+            {{ total }} pessoa(s) encontrada(s)
           </span>
           <button
             type="button"
@@ -268,7 +321,7 @@ const sanitizeNumericFilter = (field) => {
       </div>
 
       <EmptyState
-        v-if="!filteredPeople.length"
+        v-if="!people.length"
         :icon="Search"
         title="Nenhuma pessoa encontrada"
         description="Ajuste os filtros para encontrar a pessoa desejada."
@@ -283,7 +336,7 @@ const sanitizeNumericFilter = (field) => {
         <!-- mobile: cards -->
         <div class="flex flex-col gap-3 sm:hidden">
           <div
-            v-for="person in filteredPeople"
+            v-for="person in people"
             :key="person.id"
             class="rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03] transition-shadow active:shadow-none"
           >
@@ -361,7 +414,7 @@ const sanitizeNumericFilter = (field) => {
               </thead>
               <tbody class="divide-y divide-ink-100/60">
                 <tr
-                  v-for="person in filteredPeople"
+                  v-for="person in people"
                   :key="person.id"
                   class="group text-ink-700 transition-colors hover:bg-ink-50/50"
                 >
@@ -415,6 +468,51 @@ const sanitizeNumericFilter = (field) => {
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- Paginação (mesmo estilo do DataTable.vue) -->
+        <div
+          v-if="lastPage > 1"
+          class="mt-4 flex flex-col items-center justify-between gap-3 border-t border-ink-100 pt-3 sm:flex-row"
+        >
+          <p class="text-xs text-ink-400">{{ rangeLabel }}</p>
+
+          <div class="flex items-center gap-1">
+            <button
+              type="button"
+              class="flex h-7 w-7 items-center justify-center rounded-lg text-ink-500 hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              :disabled="currentPage <= 1 || isLoading"
+              aria-label="Página anterior"
+              @click="goToPage(currentPage - 1)"
+            >
+              <ChevronLeft :size="15" />
+            </button>
+
+            <template v-for="(page, idx) in visiblePages" :key="`${page}-${idx}`">
+              <span v-if="page === '...'" class="px-1.5 text-xs text-ink-300">…</span>
+              <button
+                v-else
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                :class="page === currentPage ? 'bg-brand-600 text-white' : 'text-ink-600 hover:bg-ink-50'"
+                :disabled="isLoading"
+                :aria-current="page === currentPage ? 'page' : undefined"
+                @click="goToPage(page)"
+              >
+                {{ page }}
+              </button>
+            </template>
+
+            <button
+              type="button"
+              class="flex h-7 w-7 items-center justify-center rounded-lg text-ink-500 hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              :disabled="currentPage >= lastPage || isLoading"
+              aria-label="Próxima página"
+              @click="goToPage(currentPage + 1)"
+            >
+              <ChevronRight :size="15" />
+            </button>
           </div>
         </div>
       </template>
