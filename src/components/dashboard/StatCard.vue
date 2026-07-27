@@ -33,7 +33,7 @@ defineProps({
       :to="to"
       class="mt-4 flex w-fit items-center gap-1 rounded-lg text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
     >
-      Ver relatório
+      Ver {{ label }}
       <ArrowUpRight :size="12" />
     </router-link>
   </div>
