@@ -15,6 +15,8 @@ import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
 import { vehicleService } from '../services/vehicle.service'
 import { revisionService } from '../services/revision.service'
+// 🟢 NOVO — service do endpoint agregado (ver dashboard.service.js)
+import { dashboardService } from '../services/dashboard.service'
 
 const { people, isLoading: peopleLoading, errorMessage: peopleError, total: peopleTotal } = usePeople()
 const toast = useToast()
@@ -26,6 +28,25 @@ watch(peopleError, (message) => {
   if (message) toast.error(message)
 })
 
+// 🟢 NOVO — uma única chamada que já traz people_count, vehicles_count,
+// revisions_count e total_invested calculados no backend. Substitui o
+// cálculo que antes era feito no frontend em cima de todas as listas.
+const {
+  data: summary,
+  isLoading: summaryLoading,
+  error: summaryError,
+} = useQuery({
+  queryKey: ['dashboard-summary'],
+  queryFn: () => dashboardService.getSummary(),
+})
+
+watch(summaryError, (err) => {
+  if (err) toast.error(err.response?.data?.message ?? 'Não foi possível carregar o resumo do painel.')
+})
+
+// 🟡 MANTIDO por enquanto — ainda necessário para o UpcomingRevisionsCard
+// e para localizar o proprietário no openRevisionsModal. Não é mais usado
+// para calcular os stat cards.
 const {
   data: vehicles,
   isLoading: vehiclesLoading,
@@ -35,6 +56,10 @@ const {
   queryFn: () => vehicleService.list(),
 })
 
+// 🟡 MANTIDO por enquanto — dispara uma query de revisões por veículo.
+// TODO: assim que tivermos o UpcomingRevisionsCard.vue, trocar isso pelo
+// endpoint /reports/revisions/upcoming (já existe no backend) e eliminar
+// esse N+1 de vez.
 const revisionQueries = useQueries({
   queries: computed(() =>
     (vehicles.value ?? []).map((vehicle) => ({
@@ -51,38 +76,36 @@ const revisionsLoading = computed(
   () => vehiclesLoading.value || revisionQueries.value.some((q) => q.isLoading)
 )
 
-const totalInvested = computed(() =>
-  allRevisions.value.reduce((sum, revision) => sum + Number(revision.cost || 0), 0)
-)
+// isLoading agora reflete só o que os cards de resumo dependem (people +
+// summary). Os outros carregamentos (veículos/revisões completos) seguem
+// em paralelo, sem travar a exibição dos números do topo.
+const isLoading = computed(() => peopleLoading.value || summaryLoading.value)
 
-const isLoading = computed(
-  () => peopleLoading.value || vehiclesLoading.value || revisionsLoading.value
-)
-
+// 🟢 NOVO — stats vem direto do summary, sem reduce/loop no frontend.
 const stats = computed(() => [
   {
     label: 'Pessoas',
-    value: String(peopleTotal.value),
+    value: String(summary.value?.people_count ?? peopleTotal.value ?? 0),
     icon: Users,
-    loading: peopleLoading.value,
+    loading: summaryLoading.value,
   },
   {
     label: 'Veículos',
-    value: String((vehicles.value ?? []).length),
+    value: String(summary.value?.vehicles_count ?? 0),
     icon: Car,
-    loading: vehiclesLoading.value,
+    loading: summaryLoading.value,
   },
   {
     label: 'Revisões',
-    value: String(allRevisions.value.length),
+    value: String(summary.value?.revisions_count ?? 0),
     icon: Wrench,
-    loading: revisionsLoading.value,
+    loading: summaryLoading.value,
   },
   {
     label: 'Investido',
-    value: formatCurrency(totalInvested.value),
+    value: formatCurrency(summary.value?.total_invested ?? 0),
     icon: Wallet,
-    loading: revisionsLoading.value,
+    loading: summaryLoading.value,
   },
 ])
 
@@ -158,15 +181,15 @@ const closeVehicleFormModal = () => {
 
     <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <GettingStartedCard
-        :has-people="people.length > 0"
-        :has-vehicles="(vehicles ?? []).length > 0"
-        :has-revisions="allRevisions.length > 0"
+        :has-people="(summary?.people_count ?? 0) > 0"
+        :has-vehicles="(summary?.vehicles_count ?? 0) > 0"
+        :has-revisions="(summary?.revisions_count ?? 0) > 0"
       />
       <UpcomingRevisionsCard
         :vehicles="vehicles ?? []"
         :people="people"
         :revisions="allRevisions"
-        :is-loading="isLoading"
+        :is-loading="revisionsLoading"
         @edit-vehicle="openRevisionsModal"
       />
     </section>
