@@ -1,9 +1,14 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import {
   BarChart3, Car, Users, Wrench, Calendar,
-  DollarSign, Receipt, AlertCircle, RefreshCw,
+  DollarSign, Receipt, AlertCircle, RefreshCw, Download,
 } from '@lucide/vue'
+import jsPDF from 'jspdf'
+// 🔴 AQUI — usamos o fork "pro" porque o html2canvas original não sabe ler
+// cores em oklch()/lab(), que é o formato que o Tailwind v4 gera por padrão.
+// Sem isso, a captura falha silenciosamente pra qualquer elemento estilizado com Tailwind.
+import html2canvas from 'html2canvas-pro'
 import AppShell from '../components/layout/AppShell.vue'
 import EmptyState from '../components/dashboard/EmptyState.vue'
 import ReportPanel from '../components/reports/ReportPanel.vue'
@@ -347,11 +352,113 @@ const handleVehiclesByPersonRowClick = (row) => {
   openVehicleModal({ id: row.person_id, name: row.person_name }, row.vehicle_id)
 }
 
+// ---------------------------------------------------------------------
+// EXPORTAÇÃO EM PDF — client-side, com html2canvas + jsPDF
+// ---------------------------------------------------------------------
+const isExporting = ref(false)
+const overviewRef = ref(null) // filtros + KPIs + rankings + gráficos + próximas revisões
+const detailRef = ref(null)   // conteúdo da aba de detalhe ativa (revisões/veículos/pessoas)
+
+// Fatia um canvas alto em quantas páginas A4 forem necessárias e as adiciona ao PDF.
+// Evita imagem cortada/esticada quando o conteúdo (ex: tabela grande) é mais alto que uma página.
+const addCanvasPaginated = (pdf, canvas, margin = 10) => {
+  const pageWidth = pdf.internal.pageSize.getWidth()
+  const pageHeight = pdf.internal.pageSize.getHeight()
+  const usableWidth = pageWidth - margin * 2
+  const usableHeight = pageHeight - margin * 2
+
+  const pxPerMm = canvas.width / usableWidth
+  const pageHeightPx = Math.floor(usableHeight * pxPerMm)
+
+  let renderedHeight = 0
+  let isFirstSlice = true
+
+  while (renderedHeight < canvas.height) {
+    const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedHeight)
+
+    const sliceCanvas = document.createElement('canvas')
+    sliceCanvas.width = canvas.width
+    sliceCanvas.height = sliceHeightPx
+    const ctx = sliceCanvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height)
+    ctx.drawImage(canvas, 0, renderedHeight, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx)
+
+    const imgData = sliceCanvas.toDataURL('image/png')
+    const sliceHeightMm = sliceHeightPx / pxPerMm
+
+    if (!isFirstSlice) pdf.addPage()
+    pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, sliceHeightMm)
+
+    renderedHeight += sliceHeightPx
+    isFirstSlice = false
+  }
+}
+
+const captureSection = (el) =>
+  html2canvas(el, {
+    scale: 2, // melhora nitidez do texto/gráficos no PDF
+    useCORS: true,
+    backgroundColor: '#ffffff',
+  })
+
+const exportToPDF = async () => {
+  if (isExporting.value || !overviewRef.value) return
+  isExporting.value = true
+  const originalTab = activeDetailTab.value
+
+  try {
+    const pdf = new jsPDF('p', 'mm', 'a4')
+
+    // 1) Visão geral: filtros, KPIs, rankings, gráficos e próximas revisões
+    await nextTick()
+    const overviewCanvas = await captureSection(overviewRef.value)
+    addCanvasPaginated(pdf, overviewCanvas)
+
+    // 2) Uma seção por aba de detalhe (revisões, veículos, pessoas)
+    for (const tab of detailTabs) {
+      activeDetailTab.value = tab.key
+      await nextTick()
+      // pequena espera pra tabela/gráfico da aba renderizar de fato antes de capturar
+      await new Promise((resolve) => setTimeout(resolve, 150))
+
+      if (!detailRef.value) continue
+      const detailCanvas = await captureSection(detailRef.value)
+      pdf.addPage()
+      addCanvasPaginated(pdf, detailCanvas)
+    }
+
+    pdf.save(`relatorio-motor-hero-${toISODate(new Date())}.pdf`)
+  } catch (error) {
+    console.error('Erro ao gerar PDF:', error)
+    toast.error(`Não foi possível gerar o PDF: ${error?.message || 'erro desconhecido'}`)
+  } finally {
+    activeDetailTab.value = originalTab
+    await nextTick()
+    isExporting.value = false
+  }
+}
+// --- fim exportação PDF ---
+
 onMounted(loadAll)
 </script>
 
 <template>
   <AppShell title="Relatórios" subtitle="Visão geral do sistema e histórico de revisões.">
+    <template #actions>
+      <button
+        v-if="!isLoading && hasAnyData"
+        type="button"
+        class="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+        :disabled="isExporting"
+        @click="exportToPDF"
+      >
+        <RefreshCw v-if="isExporting" :size="16" class="animate-spin" />
+        <Download v-else :size="16" />
+        {{ isExporting ? 'Gerando PDF...' : 'Exportar PDF' }}
+      </button>
+    </template>
+
     <div
       v-if="errorMessage"
       class="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700"
@@ -379,93 +486,95 @@ onMounted(loadAll)
     />
 
     <template v-else>
-      <!-- ====== FILTROS RÁPIDOS ====== -->
-      <div class="mb-6 flex flex-wrap items-center gap-2" role="group" aria-label="Período do relatório">
-        <button
-          v-for="preset in PRESETS"
-          :key="preset.key"
-          type="button"
-          class="rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
-          :class="
-            activePreset === preset.key
-              ? 'bg-brand-600 text-white'
-              : 'border border-ink-200 bg-white text-ink-600 hover:bg-ink-50'
-          "
-          :aria-pressed="activePreset === preset.key"
-          @click="applyPreset(preset)"
-        >
-          {{ preset.label }}
-        </button>
-
-        <template v-if="activePreset === 'custom'">
-          <input v-model="periodStart" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data inicial" />
-          <span class="text-xs text-ink-400">até</span>
-          <input v-model="periodEnd" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data final" />
+      <div ref="overviewRef">
+        <!-- ====== FILTROS RÁPIDOS ====== -->
+        <div class="mb-6 flex flex-wrap items-center gap-2" role="group" aria-label="Período do relatório">
           <button
+            v-for="preset in PRESETS"
+            :key="preset.key"
             type="button"
-            class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
-            @click="applyCustomPeriod"
+            class="rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
+            :class="
+              activePreset === preset.key
+                ? 'bg-brand-600 text-white'
+                : 'border border-ink-200 bg-white text-ink-600 hover:bg-ink-50'
+            "
+            :aria-pressed="activePreset === preset.key"
+            @click="applyPreset(preset)"
           >
-            <Calendar :size="13" />
-            Aplicar
+            {{ preset.label }}
           </button>
-        </template>
+
+          <template v-if="activePreset === 'custom'">
+            <input v-model="periodStart" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data inicial" />
+            <span class="text-xs text-ink-400">até</span>
+            <input v-model="periodEnd" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data final" />
+            <button
+              type="button"
+              class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
+              @click="applyCustomPeriod"
+            >
+              <Calendar :size="13" />
+              Aplicar
+            </button>
+          </template>
+        </div>
+
+        <!-- ====== KPIs ====== -->
+        <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
+          <KpiCard label="Revisões" :value="kpiTotalRevisoes" :icon="Wrench" accent="brand" :loading="isLoading" />
+          <KpiCard label="Veículos atendidos" :value="kpiVeiculosAtendidos" :icon="Car" accent="neutral" :loading="isLoading" />
+          <KpiCard label="Clientes atendidos" :value="kpiClientesAtendidos" :icon="Users" accent="neutral" :loading="isLoading" />
+          <KpiCard
+            label="Próximas revisões"
+            :value="kpiProximasRevisoes"
+            :icon="AlertCircle"
+            :accent="kpiProximasRevisoes > 0 ? 'warning' : 'success'"
+            hint="atrasadas ou nos próx. 7 dias"
+            :loading="isLoading"
+          />
+          <KpiCard label="Custo total" :value="formatCurrency(kpiCustoTotal)" :icon="DollarSign" accent="success" :loading="isLoading" />
+          <KpiCard label="Ticket médio" :value="formatCurrency(kpiTicketMedio)" :icon="Receipt" accent="brand" :loading="isLoading" />
+        </div>
+
+        <!-- ====== RANKINGS ====== -->
+        <div class="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <ReportPanel title="Marcas com mais revisões" description="Todos os períodos">
+            <RankingList :items="brandsRevisionItems" accent-class="bg-green-500" />
+          </ReportPanel>
+
+          <ReportPanel title="Clientes mais frequentes" description="Todos os períodos">
+            <RankingList :items="peopleRevisionItems" accent-class="bg-amber-500" />
+          </ReportPanel>
+        </div>
+
+        <!-- ====== GRÁFICOS DE GÊNERO ====== -->
+        <div class="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <ReportPanel title="Veículos por gênero" description="Todos os períodos">
+            <DoughnutChart :chart-data="vehiclesByGenderChart" />
+          </ReportPanel>
+
+          <ReportPanel title="Pessoas por gênero" description="Todos os períodos">
+            <DoughnutChart :chart-data="peopleByGenderChart" />
+            <p class="mt-3 text-center text-xs text-ink-400">
+              Idade média — homens: {{ avgAgeMale }} anos · mulheres: {{ avgAgeFemale }} anos
+            </p>
+          </ReportPanel>
+
+          <ReportPanel title="Marcas por gênero" description="Todos os períodos">
+            <BarChart :chart-data="brandsByGenderChart" />
+          </ReportPanel>
+        </div>
+
+        <!-- ====== ALERTAS / PRÓXIMAS REVISÕES ====== -->
+        <ReportPanel
+          title="Próximas revisões"
+          description="Valor informado no cadastro ou, na ausência dele, estimativa com base no histórico do veículo."
+          class="mb-8"
+        >
+          <UpcomingRevisionsPanel :items="upcomingWithStatus" />
+        </ReportPanel>
       </div>
-
-      <!-- ====== KPIs ====== -->
-      <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
-        <KpiCard label="Revisões" :value="kpiTotalRevisoes" :icon="Wrench" accent="brand" :loading="isLoading" />
-        <KpiCard label="Veículos atendidos" :value="kpiVeiculosAtendidos" :icon="Car" accent="neutral" :loading="isLoading" />
-        <KpiCard label="Clientes atendidos" :value="kpiClientesAtendidos" :icon="Users" accent="neutral" :loading="isLoading" />
-        <KpiCard
-          label="Próximas revisões"
-          :value="kpiProximasRevisoes"
-          :icon="AlertCircle"
-          :accent="kpiProximasRevisoes > 0 ? 'warning' : 'success'"
-          hint="atrasadas ou nos próx. 7 dias"
-          :loading="isLoading"
-        />
-        <KpiCard label="Custo total" :value="formatCurrency(kpiCustoTotal)" :icon="DollarSign" accent="success" :loading="isLoading" />
-        <KpiCard label="Ticket médio" :value="formatCurrency(kpiTicketMedio)" :icon="Receipt" accent="brand" :loading="isLoading" />
-      </div>
-
-      <!-- ====== RANKINGS ====== -->
-      <div class="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ReportPanel title="Marcas com mais revisões" description="Todos os períodos">
-          <RankingList :items="brandsRevisionItems" accent-class="bg-green-500" />
-        </ReportPanel>
-
-        <ReportPanel title="Clientes mais frequentes" description="Todos os períodos">
-          <RankingList :items="peopleRevisionItems" accent-class="bg-amber-500" />
-        </ReportPanel>
-      </div>
-
-      <!-- ====== GRÁFICOS DE GÊNERO ====== -->
-      <div class="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <ReportPanel title="Veículos por gênero" description="Todos os períodos">
-          <DoughnutChart :chart-data="vehiclesByGenderChart" />
-        </ReportPanel>
-
-        <ReportPanel title="Pessoas por gênero" description="Todos os períodos">
-          <DoughnutChart :chart-data="peopleByGenderChart" />
-          <p class="mt-3 text-center text-xs text-ink-400">
-            Idade média — homens: {{ avgAgeMale }} anos · mulheres: {{ avgAgeFemale }} anos
-          </p>
-        </ReportPanel>
-
-        <ReportPanel title="Marcas por gênero" description="Todos os períodos">
-          <BarChart :chart-data="brandsByGenderChart" />
-        </ReportPanel>
-      </div>
-
-      <!-- ====== ALERTAS / PRÓXIMAS REVISÕES ====== -->
-      <ReportPanel
-        title="Próximas revisões"
-        description="Valor informado no cadastro ou, na ausência dele, estimativa com base no histórico do veículo."
-        class="mb-8"
-      >
-        <UpcomingRevisionsPanel :items="upcomingWithStatus" />
-      </ReportPanel>
 
       <!-- ====== TABELAS DETALHADAS ====== -->
       <div class="mb-4 flex gap-2 border-b border-ink-100">
@@ -487,76 +596,78 @@ onMounted(loadAll)
         </button>
       </div>
 
-      <div v-if="activeDetailTab === 'revisions'" class="flex flex-col gap-6">
-        <ReportPanel title="Tempo médio entre revisões" description="Média de dias entre visitas, por pessoa (considerando todos os veículos dela)">
+      <div ref="detailRef">
+        <div v-if="activeDetailTab === 'revisions'" class="flex flex-col gap-6">
+          <ReportPanel title="Tempo médio entre revisões" description="Média de dias entre visitas, por pessoa (considerando todos os veículos dela)">
+            <ReportTable
+              :columns="[
+                { key: 'person_name', label: 'Pessoa' },
+                { key: 'avg_days', label: 'Média (dias)' },
+              ]"
+              :rows="data.avgIntervalByPerson"
+              :pagination="pagination.avgIntervalByPerson"
+              :loading="tableLoading.avgIntervalByPerson"
+              row-clickable
+              @page-change="handleAvgIntervalPage"
+              @row-click="handleAvgIntervalRowClick"
+            />
+          </ReportPanel>
+
+          <ReportPanel title="Revisões no período selecionado">
+            <p v-if="!revisionsByPeriodFormatted.length" class="py-6 text-center text-sm text-ink-400">
+              Nenhuma revisão encontrada nesse período.
+            </p>
+            <ReportTable
+              v-else
+              :columns="[
+                { key: 'date', label: 'Data' },
+                { key: 'person_name', label: 'Pessoa' },
+                { key: 'vehicle', label: 'Veículo' },
+                { key: 'description', label: 'Descrição' },
+              ]"
+              :rows="revisionsByPeriodFormatted"
+              :pagination="pagination.revisionsByPeriod"
+              :loading="tableLoading.revisionsByPeriod"
+              row-clickable
+              @page-change="handleRevisionsByPeriodPage"
+              @row-click="handleRevisionsByPeriodRowClick"
+            />
+          </ReportPanel>
+        </div>
+
+        <ReportPanel v-else-if="activeDetailTab === 'vehicles'" title="Todos os veículos por pessoa">
           <ReportTable
             :columns="[
-              { key: 'person_name', label: 'Pessoa' },
-              { key: 'avg_days', label: 'Média (dias)' },
+              { key: 'person_name', label: 'Proprietário' },
+              { key: 'plate', label: 'Placa' },
+              { key: 'model', label: 'Modelo' },
+              { key: 'brand', label: 'Marca' },
             ]"
-            :rows="data.avgIntervalByPerson"
-            :pagination="pagination.avgIntervalByPerson"
-            :loading="tableLoading.avgIntervalByPerson"
+            :rows="data.vehiclesByPerson"
+            :pagination="pagination.vehiclesByPerson"
+            :loading="tableLoading.vehiclesByPerson"
             row-clickable
-            @page-change="handleAvgIntervalPage"
-            @row-click="handleAvgIntervalRowClick"
+            @page-change="handleVehiclesByPersonPage"
+            @row-click="handleVehiclesByPersonRowClick"
           />
         </ReportPanel>
 
-        <ReportPanel title="Revisões no período selecionado">
-          <p v-if="!revisionsByPeriodFormatted.length" class="py-6 text-center text-sm text-ink-400">
-            Nenhuma revisão encontrada nesse período.
-          </p>
+        <ReportPanel v-else title="Todas as pessoas">
           <ReportTable
-            v-else
             :columns="[
-              { key: 'date', label: 'Data' },
-              { key: 'person_name', label: 'Pessoa' },
-              { key: 'vehicle', label: 'Veículo' },
-              { key: 'description', label: 'Descrição' },
+              { key: 'name', label: 'Nome' },
+              { key: 'email', label: 'E-mail' },
+              { key: 'phone', label: 'Telefone' },
             ]"
-            :rows="revisionsByPeriodFormatted"
-            :pagination="pagination.revisionsByPeriod"
-            :loading="tableLoading.revisionsByPeriod"
+            :rows="allPeopleFormatted"
+            :pagination="pagination.allPeople"
+            :loading="tableLoading.allPeople"
             row-clickable
-            @page-change="handleRevisionsByPeriodPage"
-            @row-click="handleRevisionsByPeriodRowClick"
+            @page-change="handleAllPeoplePage"
+            @row-click="handleAllPeopleRowClick"
           />
         </ReportPanel>
       </div>
-
-      <ReportPanel v-else-if="activeDetailTab === 'vehicles'" title="Todos os veículos por pessoa">
-        <ReportTable
-          :columns="[
-            { key: 'person_name', label: 'Proprietário' },
-            { key: 'plate', label: 'Placa' },
-            { key: 'model', label: 'Modelo' },
-            { key: 'brand', label: 'Marca' },
-          ]"
-          :rows="data.vehiclesByPerson"
-          :pagination="pagination.vehiclesByPerson"
-          :loading="tableLoading.vehiclesByPerson"
-          row-clickable
-          @page-change="handleVehiclesByPersonPage"
-          @row-click="handleVehiclesByPersonRowClick"
-        />
-      </ReportPanel>
-
-      <ReportPanel v-else title="Todas as pessoas">
-        <ReportTable
-          :columns="[
-            { key: 'name', label: 'Nome' },
-            { key: 'email', label: 'E-mail' },
-            { key: 'phone', label: 'Telefone' },
-          ]"
-          :rows="allPeopleFormatted"
-          :pagination="pagination.allPeople"
-          :loading="tableLoading.allPeople"
-          row-clickable
-          @page-change="handleAllPeoplePage"
-          @row-click="handleAllPeopleRowClick"
-        />
-      </ReportPanel>
     </template>
 
     <RevisionsModal
