@@ -3,21 +3,6 @@ import { z } from 'zod'
 const CURRENT_YEAR = new Date().getFullYear()
 const MIN_YEAR = 1950 // piso razoável; ajuste se precisar aceitar carros mais antigos/clássicos
 
-export const carColors = [
-  'Branco',
-  'Preto',
-  'Prata',
-  'Cinza',
-  'Vermelho',
-  'Azul',
-  'Verde',
-  'Amarelo',
-  'Marrom',
-  'Bege',
-  'Laranja',
-  'Dourado',
-]
-
 // Aceita com ou sem traço/espaço, e normaliza para maiúsculas sem separador
 const normalizePlate = (value) =>
   value
@@ -45,11 +30,7 @@ export const vehicleSchema = z.object({
     .refine((val) => Number(val) >= MIN_YEAR, { message: `O ano não pode ser anterior a ${MIN_YEAR}.` })
     .refine((val) => Number(val) <= CURRENT_YEAR + 1, { message: `O ano não pode ser maior que ${CURRENT_YEAR + 1}.` }),
 
-  color: z
-    .string()
-    .trim()
-    .min(1, 'Selecione a cor.')
-    .refine((val) => carColors.includes(val), { message: 'Selecione uma cor válida.' }),
+  color_id: z.string().trim().min(1, 'Selecione a cor.'),
 
   license_plate: z
     .string()

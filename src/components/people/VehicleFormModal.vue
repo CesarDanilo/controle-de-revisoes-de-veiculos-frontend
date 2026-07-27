@@ -1,12 +1,13 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
-import { Car, Palette, Calendar, Hash, Plus, X, Pencil, Trash2, Tag } from '@lucide/vue'
+import { Car, Palette, Calendar, Hash, Plus, X, Pencil, Trash2, Tag, Loader2 } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
-import { vehicleSchema, carColors } from '../../schemas/vehicle.schema'
+import { vehicleSchema } from '../../schemas/vehicle.schema'
 import { brandService } from '../../services/brand.service'
+import { colorService } from '../../services/color.service'
 import { vehicleService } from '../../services/vehicle.service'
 import { useToast } from '../../composables/useToast'
 
@@ -21,7 +22,7 @@ const toast = useToast()
 const emptyForm = () => ({
   model: '',
   year: '',
-  color: '',
+  color_id: '',
   brand_id: '',
   license_plate: '',
   people_id: props.person.id,
@@ -39,6 +40,9 @@ const isLoadingVehicles = ref(true)
 const brands = ref([])
 const isLoadingBrands = ref(true)
 
+const colors = ref([])
+const isLoadingColors = ref(true)
+
 const fieldErrors = ref({})
 const isSubmitting = ref(false)
 
@@ -47,6 +51,11 @@ const newBrandName = ref('')
 const isSavingBrand = ref(false)
 const newBrandInputRef = ref(null)
 
+const isCreatingColor = ref(false)
+const newColorName = ref('')
+const isSavingColor = ref(false)
+const newColorInputRef = ref(null)
+
 const isConfirmOpen = ref(false)
 const vehicleToDelete = ref(null)
 const isDeleting = ref(false)
@@ -54,6 +63,12 @@ const isDeleting = ref(false)
 const isEditing = computed(() => editingVehicleId.value !== null)
 
 const brandName = (brandId) => brands.value.find((b) => b.id === brandId)?.name ?? '—'
+const colorName = (colorId) => colors.value.find((c) => c.id === colorId)?.name ?? '—'
+
+// lista ordenada alfabeticamente pro select, sem alterar a ordem original em colors.value
+const sortedColors = computed(() =>
+  [...colors.value].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+)
 
 // getter/setter com bloqueio real de caracteres (não só maxlength visual)
 const modelValue = computed({
@@ -65,16 +80,20 @@ const modelValue = computed({
 
 onMounted(async () => {
   isLoadingBrands.value = true
+  isLoadingColors.value = true
   isLoadingVehicles.value = true
   try {
-    const [brandsList, vehiclesList] = await Promise.all([
+    const [brandsList, colorsList, vehiclesList] = await Promise.all([
       brandService.list(),
+      colorService.list(),
       vehicleService.list(),
     ])
     brands.value = brandsList
+    colors.value = colorsList
     vehicles.value = vehiclesList.filter((v) => v.people_id === props.person.id)
   } finally {
     isLoadingBrands.value = false
+    isLoadingColors.value = false
     isLoadingVehicles.value = false
   }
 })
@@ -89,7 +108,7 @@ const resetForm = () => {
 const selectForEdit = (vehicle) => {
   form.model = vehicle.model
   form.year = String(vehicle.year)
-  form.color = vehicle.color
+  form.color_id = vehicle.color_id
   form.brand_id = vehicle.brand_id
   form.license_plate = vehicle.license_plate
   form.people_id = props.person.id
@@ -194,6 +213,81 @@ const saveNewBrand = async () => {
     isSavingBrand.value = false
   }
 }
+
+// ---- Criação de cor (mesmo padrão da criação de marca) ----
+const openColorCreation = async () => {
+  isCreatingColor.value = true
+  newColorName.value = ''
+  await nextTick()
+  newColorInputRef.value?.focus()
+}
+
+const cancelColorCreation = () => {
+  isCreatingColor.value = false
+  newColorName.value = ''
+}
+
+const COLOR_NAME_MAX_LENGTH = 30
+
+const handleColorNameKeydown = (event) => {
+  const allowedKeys = [
+    'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight',
+    'ArrowUp', 'ArrowDown', 'Tab', 'Home', 'End',
+    'Enter', 'Escape',
+  ]
+
+  if (event.ctrlKey || event.metaKey || allowedKeys.includes(event.key)) {
+    return
+  }
+
+  const input = event.target
+  const hasSelection = input.selectionStart !== input.selectionEnd
+
+  if (newColorName.value.length >= COLOR_NAME_MAX_LENGTH && !hasSelection) {
+    event.preventDefault()
+  }
+}
+
+const handleColorNamePaste = (event) => {
+  event.preventDefault()
+  const pasted = (event.clipboardData || window.clipboardData).getData('text')
+  const input = event.target
+  const start = input.selectionStart
+  const end = input.selectionEnd
+
+  const newValue = newColorName.value.slice(0, start) + pasted + newColorName.value.slice(end)
+  newColorName.value = newValue.slice(0, COLOR_NAME_MAX_LENGTH)
+}
+
+const saveNewColor = async () => {
+  const name = newColorName.value.trim()
+  if (!name) return
+
+  // checagem local: já existe cor com esse nome na lista carregada?
+  const alreadyExists = colors.value.some((c) => c.name.toUpperCase().trim() === name.toUpperCase())
+  if (alreadyExists) {
+    toast.error('Essa cor já está cadastrada.')
+    return
+  }
+
+  isSavingColor.value = true
+  try {
+    const color = await colorService.create({ name })
+    colors.value.push(color)
+    form.color_id = color.id
+    toast.success('Cor cadastrada com sucesso!')
+    cancelColorCreation()
+  } catch (error) {
+    const rawMessage = error.response?.data?.message ?? error.response?.data?.error
+    const message = rawMessage?.includes('already been taken')
+      ? 'Essa cor já está cadastrada.'
+      : (rawMessage ?? 'Não foi possível cadastrar a cor.')
+    toast.error(message)
+  } finally {
+    isSavingColor.value = false
+  }
+}
+// ------------------------------------------------------------
 
 const handleSubmit = async () => {
   const result = vehicleSchema.safeParse(form)
@@ -317,9 +411,10 @@ const handleModelPaste = (event) => {
   form.model = newValue.slice(0, MODEL_MAX_LENGTH)
 }
 
-// 🔴 AQUI — computeds pro contador de caracteres (Modelo e Nova marca)
+// 🔴 AQUI — computeds pro contador de caracteres (Modelo, Nova marca e Nova cor)
 const modelCharCount = computed(() => form.model.length)
 const brandNameCharCount = computed(() => newBrandName.value.length)
+const colorNameCharCount = computed(() => newColorName.value.length)
 
 const isLetter = (char) => /^[A-Za-z]$/.test(char)
 const isDigit = (char) => /^[0-9]$/.test(char)
@@ -489,7 +584,7 @@ const handleLicensePlatePaste = (event) => {
               </div>
               <div>
                 <p class="text-sm font-medium text-ink-900">{{ brandName(vehicle.brand_id) }} {{ vehicle.model }}</p>
-                <p class="text-xs text-ink-500">{{ vehicle.license_plate }} · {{ vehicle.year }} · {{ vehicle.color }}</p>
+                <p class="text-xs text-ink-500">{{ vehicle.license_plate }} · {{ vehicle.year }} · {{ colorName(vehicle.color_id) }}</p>
               </div>
             </div>
             <div class="flex shrink-0 gap-1">
@@ -615,8 +710,8 @@ const handleLicensePlatePaste = (event) => {
             </div>
           </div>
 
-          <div class="grid grid-cols-2 gap-3">
-            <div class="flex flex-col gap-1.5">
+          <div class="grid grid-cols-5 gap-3">
+            <div class="col-span-2 flex flex-col gap-1.5">
               <BaseInput
                 v-model="yearValue"
                 label="Ano"
@@ -630,18 +725,74 @@ const handleLicensePlatePaste = (event) => {
               <span v-if="fieldErrors.year" class="text-xs text-red-600">{{ fieldErrors.year[0] }}</span>
             </div>
 
-            <div class="flex flex-col gap-1.5">
-              <label class="text-sm font-medium text-ink-700">Cor</label>
+            <div class="col-span-3 flex flex-col gap-1.5">
+              <div class="flex items-center justify-between">
+                <label class="text-sm font-medium text-ink-700">Cor</label>
+                <button
+                  v-if="!isCreatingColor"
+                  type="button"
+                  class="flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
+                  @click="openColorCreation"
+                >
+                  <Plus :size="14" />
+                  Nova cor
+                </button>
+              </div>
+
               <select
-                v-model="form.color"
+                v-if="!isCreatingColor"
+                v-model="form.color_id"
                 class="rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                :disabled="isLoadingColors"
               >
-                <option value="" disabled>Selecione</option>
-                <option v-for="color in carColors" :key="color" :value="color">
-                  {{ color }}
+                <option value="" disabled>{{ isLoadingColors ? 'Carregando...' : 'Selecione' }}</option>
+                <option v-for="color in sortedColors" :key="color.id" :value="color.id">
+                  {{ color.name }}
                 </option>
               </select>
-              <span v-if="fieldErrors.color" class="text-xs text-red-600">{{ fieldErrors.color[0] }}</span>
+
+              <div v-else class="flex flex-col gap-1">
+                <div class="flex items-center gap-1.5">
+                  <input
+                    ref="newColorInputRef"
+                    v-model="newColorName"
+                    type="text"
+                    placeholder="Nome da cor"
+                    class="min-w-0 flex-1 rounded-xl border border-surface-border bg-white px-2 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    :maxlength="COLOR_NAME_MAX_LENGTH"
+                    @keydown.enter="saveNewColor"
+                    @keydown="handleColorNameKeydown"
+                    @paste="handleColorNamePaste"
+                  />
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-xl bg-brand-600 p-2 text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    aria-label="Salvar cor"
+                    :disabled="isSavingColor || !newColorName.trim()"
+                    @click="saveNewColor"
+                  >
+                    <Loader2 v-if="isSavingColor" :size="16" class="animate-spin" />
+                    <Plus v-else :size="16" />
+                  </button>
+                  <button
+                    type="button"
+                    class="shrink-0 rounded-xl p-2 text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700"
+                    aria-label="Cancelar"
+                    :disabled="isSavingColor"
+                    @click="cancelColorCreation"
+                  >
+                    <X :size="16" />
+                  </button>
+                </div>
+                <span
+                  class="self-end text-xs"
+                  :class="colorNameCharCount >= COLOR_NAME_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
+                >
+                  {{ colorNameCharCount }}/{{ COLOR_NAME_MAX_LENGTH }}
+                </span>
+              </div>
+
+              <span v-if="fieldErrors.color_id" class="text-xs text-red-600">{{ fieldErrors.color_id[0] }}</span>
             </div>
           </div>
 
