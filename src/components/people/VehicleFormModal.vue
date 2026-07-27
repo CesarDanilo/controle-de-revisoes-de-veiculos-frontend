@@ -13,6 +13,7 @@ import { useToast } from '../../composables/useToast'
 
 const props = defineProps({
   person: { type: Object, required: true },
+  highlightVehicleId: { type: [String, Number], default: null },
 })
 
 const emit = defineEmits(['close'])
@@ -109,6 +110,13 @@ onMounted(async () => {
     brands.value = brandsList
     colors.value = colorsList
     vehicles.value = vehiclesList.filter((v) => v.people_id === props.person.id)
+
+    if (props.highlightVehicleId) {
+      const target = vehicles.value.find(
+        (v) => String(v.id) === String(props.highlightVehicleId)
+      )
+      if (target) selectForEdit(target)
+    }
   } finally {
     isLoadingBrands.value = false
     isLoadingColors.value = false

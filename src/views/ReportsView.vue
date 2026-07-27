@@ -15,8 +15,10 @@ import RankingList from '../components/reports/RankingList.vue'
 import UpcomingRevisionsPanel from '../components/reports/UpcomingRevisionsPanel.vue'
 // 🔴 AQUI — mesmo modal já usado na tela de Pessoas e no painel de "Próximas revisões"
 import RevisionsModal from '../components/people/RevisionsModal.vue'
-// 🔴 AQUI — mesmo modal de cadastro/edição usado na tela de Pessoas
+// 🔴 AQUI — mesmo modal de cadastro/edição de pessoa usado na tela de Pessoas
 import PersonFormModal from '../components/people/PersonFormModal.vue'
+// 🔴 AQUI — mesmo modal de veículos (lista + cadastro/edição) usado na tela de Pessoas
+import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import { useReports } from '../composables/useReports'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
@@ -243,7 +245,7 @@ const detailTabs = [
 const activeDetailTab = ref('revisions')
 
 // ---------------------------------------------------------------------
-// MODAL DE REVISÕES — aberto ao clicar em uma linha das tabelas de revisões/veículos
+// MODAL DE REVISÕES — aberto ao clicar em uma linha das tabelas de revisões
 // ---------------------------------------------------------------------
 const isRevisionsModalOpen = ref(false)
 const selectedPerson = ref(null)
@@ -278,11 +280,6 @@ const handleRevisionsByPeriodRowClick = (row) => {
     vehicleId: row.vehicle_id,
     revisionId: row.revision_id,
   })
-}
-
-// "Todos os veículos por pessoa" — sem revisão específica, abre a listagem normal da pessoa
-const handleVehiclesByPersonRowClick = (row) => {
-  openRevisionsModal({ personId: row.person_id, personName: row.person_name })
 }
 
 // ---------------------------------------------------------------------
@@ -321,6 +318,33 @@ const handlePersonSubmit = async (payload) => {
 // "Todas as pessoas" — abre o modal de edição da pessoa clicada
 const handleAllPeopleRowClick = (row) => {
   openPersonModal(row)
+}
+
+// ---------------------------------------------------------------------
+// MODAL DE VEÍCULOS DA PESSOA — aberto ao clicar em uma linha da aba "Veículos",
+// já em modo edição do veículo clicado
+// ---------------------------------------------------------------------
+const isVehicleModalOpen = ref(false)
+const personForVehicle = ref(null)
+const highlightVehicleIdForModal = ref(null)
+
+const openVehicleModal = (person, vehicleId = null) => {
+  personForVehicle.value = person
+  highlightVehicleIdForModal.value = vehicleId
+  isVehicleModalOpen.value = true
+}
+
+const closeVehicleModal = async () => {
+  isVehicleModalOpen.value = false
+  personForVehicle.value = null
+  highlightVehicleIdForModal.value = null
+  // recarrega a página atual da tabela pra refletir qualquer edição feita no modal
+  await fetchVehiclesByPerson(pagination.vehiclesByPerson.currentPage)
+}
+
+// "Todos os veículos por pessoa" — abre o modal já em edição no veículo clicado
+const handleVehiclesByPersonRowClick = (row) => {
+  openVehicleModal({ id: row.person_id, name: row.person_name }, row.vehicle_id)
 }
 
 onMounted(loadAll)
@@ -550,6 +574,13 @@ onMounted(loadAll)
       :is-submitting="isSubmittingPerson"
       @close="closePersonModal"
       @submit="handlePersonSubmit"
+    />
+
+    <VehicleFormModal
+      v-if="isVehicleModalOpen"
+      :person="personForVehicle"
+      :highlight-vehicle-id="highlightVehicleIdForModal"
+      @close="closeVehicleModal"
     />
   </AppShell>
 </template>
