@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { Car, Wrench, Plus, X, Loader2, AlertCircle, Pencil, Trash2, Check } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import { vehicleService } from '../../services/vehicle.service'
@@ -8,6 +8,11 @@ import { useToast } from '../../composables/useToast'
 
 const props = defineProps({
   person: { type: Object, required: true },
+  // 🔴 AQUI — opcionais: quando informados (ex: clique vindo do painel de
+  // "Próximas revisões"), o modal rola até a revisão e dá um destaque visual
+  // temporário nela.
+  highlightVehicleId: { type: [String, Number], default: null },
+  highlightRevisionId: { type: [String, Number], default: null },
 })
 
 const emit = defineEmits(['close', 'register-vehicle'])
@@ -31,6 +36,13 @@ const formError = ref('') // erros gerais/backend, não ligados a um campo espec
 const descriptionInputRefs = ref({})
 const setDescriptionInputRef = (vehicleId) => (el) => {
   descriptionInputRefs.value[vehicleId] = el
+}
+
+// 🔴 AQUI — mapa de refs do <form> de cada veículo, usado só para rolar até
+// o formulário quando ele é aberto automaticamente em modo edição
+const formRefs = ref({})
+const setFormRef = (vehicleId) => (el) => {
+  formRefs.value[vehicleId] = el
 }
 
 const DESCRIPTION_MAX_LENGTH = 150
@@ -60,6 +72,16 @@ const formData = reactive(emptyForm())
 
 // snapshot normalizado da revisão original (usado pra detectar o que mudou na edição)
 const originalSnapshot = ref(null)
+
+// 🔴 AQUI — no modo criação sempre libera o botão; no modo edição só libera
+// quando algum campo realmente mudou em relação ao snapshot original
+const hasChanges = computed(() => {
+  if (formMode.value !== 'edit') return true
+  if (!originalSnapshot.value) return true
+
+  const comparable = buildComparablePayload()
+  return Object.keys(comparable).some((key) => comparable[key] !== originalSnapshot.value[key])
+})
 
 // --- Delete state ---
 const confirmingDeleteId = ref(null)
@@ -329,6 +351,37 @@ const loadAll = async () => {
   }
 }
 
+// 🔴 AQUI — depois de carregar tudo, se veio um highlightRevisionId (clique
+// vindo do painel de "Próximas revisões"), já abre o formulário dessa
+// revisão em modo edição, em vez de só mostrar a lista.
+const openHighlightedForEdit = () => {
+  if (!props.highlightRevisionId) return
+
+  let targetVehicleId = null
+  let targetRevision = null
+
+  for (const vehicle of vehicles.value) {
+    const list = revisionsByVehicle[vehicle.id] || []
+    const found = list.find((r) => r.id === props.highlightRevisionId)
+    if (found) {
+      targetVehicleId = vehicle.id
+      targetRevision = found
+      break
+    }
+  }
+
+  // revisão não encontrada entre as carregadas (ex: já foi excluída) — não faz nada
+  if (!targetRevision) return
+
+  startEdit(targetVehicleId, targetRevision)
+
+  nextTick(() => {
+    setTimeout(() => {
+      formRefs.value[targetVehicleId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 150)
+  })
+}
+
 // 🔴 AQUI — chave que identifica "qual formulário está aberto e em qual modo"
 // Precisa incluir formMode/editingRevisionId porque trocar de criar -> editar
 // no MESMO veículo não muda openFormVehicleId, e o watch não disparia só com ele.
@@ -565,7 +618,10 @@ const goToVehicleRegistration = () => {
   emit('register-vehicle')
 }
 
-onMounted(loadAll)
+onMounted(async () => {
+  await loadAll()
+  openHighlightedForEdit()
+})
 </script>
 
 <template>
@@ -631,6 +687,7 @@ onMounted(loadAll)
         >
           <form
             v-if="openFormVehicleId === vehicle.id"
+            :ref="setFormRef(vehicle.id)"
             class="mb-3 rounded-xl border p-3 sm:p-4"
             :class="formMode === 'edit' ? 'border-amber-200 bg-amber-50/60' : 'border-brand-200 bg-brand-50/60'"
             @submit.prevent="submitRevision(vehicle)"
@@ -789,7 +846,7 @@ onMounted(loadAll)
                 </button>
                 <button
                   type="submit"
-                  :disabled="isSubmitting"
+                  :disabled="isSubmitting || !hasChanges"
                   class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:py-1.5"
                   :class="formMode === 'edit' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-600 hover:bg-brand-700'"
                 >

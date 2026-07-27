@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { api } from '../lib/api'  
+import { api } from '../lib/api'
 
 const ONE_DAY = 24 * 60 * 60 * 1000
 
@@ -22,14 +22,21 @@ function classifyStatus(predictedDate) {
 function formatDateLabel(predictedDate) {
   if (!predictedDate) return '—'
 
+  // 🔴 AQUI — adicionado "year: 'numeric'", antes só mostrava dia e mês
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
     month: 'short',
+    year: 'numeric',
   }).format(new Date(predictedDate))
 }
 
 function mapItem(row) {
   return {
+    // 🔴 AQUI — ids necessários para permitir clique -> abrir RevisionsModal
+    // já destacando a revisão certa. Vêm do ReportController::upcomingRevisions.
+    person_id: row.person_id,
+    vehicle_id: row.vehicle_id,
+    revision_id: row.revision_id,
     person_name: row.person_name,
     vehicle: row.vehicle,
     predicted_date_label: formatDateLabel(row.predicted_date),

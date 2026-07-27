@@ -2,10 +2,14 @@
 import { AlertTriangle, Clock, Car } from '@lucide/vue'
 
 defineProps({
-  // [{ person_name, vehicle, predicted_date_label, status, origin_label }]
+  // [{ person_id, vehicle_id, revision_id, person_name, vehicle, predicted_date_label, status, origin_label }]
   // status: 'overdue' | 'soon' | 'normal'
   items: { type: Array, required: true },
 })
+
+// 🔴 AQUI — clique/Enter/Espaço no item abre o modal de revisões da pessoa,
+// já destacando a revisão específica (ver UpcomingRevisionsPanel.vue)
+const emit = defineEmits(['select'])
 
 const STATUS_STYLE = {
   overdue: { badge: 'bg-red-50 text-red-700', icon: AlertTriangle, label: 'Atrasada' },
@@ -21,8 +25,14 @@ const STATUS_STYLE = {
   <ul v-else class="flex flex-col divide-y divide-ink-100">
     <li
       v-for="(item, index) in items"
-      :key="`${item.person_name}-${item.vehicle}-${index}`"
-      class="flex flex-wrap items-center justify-between gap-2 py-3 first:pt-0 last:pb-0"
+      :key="item.revision_id ?? `${item.person_name}-${item.vehicle}-${index}`"
+      class="-mx-2 flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg px-2 py-3 transition-colors first:pt-0 last:pb-0 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      tabindex="0"
+      role="button"
+      :aria-label="`Ver revisões de ${item.person_name} — ${item.vehicle}`"
+      @click="emit('select', item)"
+      @keydown.enter="emit('select', item)"
+      @keydown.space.prevent="emit('select', item)"
     >
       <div class="flex items-center gap-2.5">
         <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink-50 text-ink-400">

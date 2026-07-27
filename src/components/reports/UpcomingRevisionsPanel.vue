@@ -1,8 +1,10 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ChevronLeft, ChevronRight } from '@lucide/vue'
 import { useUpcomingRevisions } from '../../composables/useUpcomingRevisions.js'
 import UpcomingRevisionsList from './UpcomingRevisionsList.vue'
+// 🔴 AQUI — mesmo modal já usado na tela de Pessoas, reaproveitado aqui
+import RevisionsModal from '../people/RevisionsModal.vue'
 
 const {
   items,
@@ -71,6 +73,31 @@ const goToPage = (target) => {
   }
   fetchPage(target)
 }
+
+// ---------------------------------------------------------------------
+// MODAL DE REVISÕES — aberto ao clicar num item da lista
+// ---------------------------------------------------------------------
+const isModalOpen = ref(false)
+const selectedPerson = ref(null)
+const highlightVehicleId = ref(null)
+const highlightRevisionId = ref(null)
+
+const handleSelect = (item) => {
+  // sem person_id não dá pra montar o objeto que o RevisionsModal espera
+  if (!item.person_id) return
+
+  selectedPerson.value = { id: item.person_id, name: item.person_name }
+  highlightVehicleId.value = item.vehicle_id ?? null
+  highlightRevisionId.value = item.revision_id ?? null
+  isModalOpen.value = true
+}
+
+const closeModal = () => {
+  isModalOpen.value = false
+  selectedPerson.value = null
+  highlightVehicleId.value = null
+  highlightRevisionId.value = null
+}
 </script>
 
 <template>
@@ -84,7 +111,7 @@ const goToPage = (target) => {
     </div>
 
     <template v-else>
-      <UpcomingRevisionsList :items="items" />
+      <UpcomingRevisionsList :items="items" @select="handleSelect" />
 
       <div
         v-if="hasPagination"
@@ -134,5 +161,14 @@ const goToPage = (target) => {
         </div>
       </div>
     </template>
+
+    <RevisionsModal
+      v-if="isModalOpen"
+      :person="selectedPerson"
+      :highlight-vehicle-id="highlightVehicleId"
+      :highlight-revision-id="highlightRevisionId"
+      @close="closeModal"
+      @register-vehicle="closeModal"
+    />
   </div>
 </template>
