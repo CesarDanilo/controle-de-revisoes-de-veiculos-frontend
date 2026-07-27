@@ -9,9 +9,11 @@ const props = defineProps({
   // { currentPage, lastPage, perPage, total } — omita pra tabela sem paginação
   pagination: { type: Object, default: null },
   loading: { type: Boolean, default: false },
+  // 🔴 AQUI — quando true, cada linha vira clicável (mouse/teclado) e emite 'row-click'
+  rowClickable: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['page-change'])
+const emit = defineEmits(['page-change', 'row-click'])
 
 const hasPagination = computed(() => !!props.pagination && props.pagination.lastPage > 1)
 
@@ -62,6 +64,11 @@ const goToPage = (page) => {
   }
   emit('page-change', page)
 }
+
+const handleRowClick = (row) => {
+  if (!props.rowClickable) return
+  emit('row-click', row)
+}
 </script>
 
 <template>
@@ -80,7 +87,17 @@ const goToPage = (page) => {
           </tr>
         </thead>
         <tbody class="divide-y divide-ink-50 text-ink-700">
-          <tr v-for="(row, i) in rows" :key="i">
+          <tr
+            v-for="(row, i) in rows"
+            :key="i"
+            :tabindex="rowClickable ? 0 : undefined"
+            :role="rowClickable ? 'button' : undefined"
+            class="transition-colors"
+            :class="rowClickable ? 'cursor-pointer hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-inset' : ''"
+            @click="handleRowClick(row)"
+            @keydown.enter="handleRowClick(row)"
+            @keydown.space.prevent="handleRowClick(row)"
+          >
             <td v-for="col in columns" :key="col.key" class="py-2 pr-4">
               {{ row[col.key] }}
             </td>

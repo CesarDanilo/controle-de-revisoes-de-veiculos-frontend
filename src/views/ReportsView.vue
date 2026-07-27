@@ -13,7 +13,13 @@ import DoughnutChart from '../components/charts/DoughnutChart.vue'
 import KpiCard from '../components/reports/KpiCard.vue'
 import RankingList from '../components/reports/RankingList.vue'
 import UpcomingRevisionsPanel from '../components/reports/UpcomingRevisionsPanel.vue'
+// 🔴 AQUI — mesmo modal já usado na tela de Pessoas e no painel de "Próximas revisões"
+import RevisionsModal from '../components/people/RevisionsModal.vue'
+// 🔴 AQUI — mesmo modal de cadastro/edição usado na tela de Pessoas
+import PersonFormModal from '../components/people/PersonFormModal.vue'
 import { useReports } from '../composables/useReports'
+import { usePeople } from '../composables/usePeople'
+import { useToast } from '../composables/useToast'
 import { maskPhone } from '../utils/masks'
 
 const {
@@ -30,6 +36,10 @@ const {
   fetchRevisionsByPeriod,
   fetchAvgIntervalByPerson,
 } = useReports()
+
+// 🔴 AQUI — usado apenas para salvar a edição de pessoa aberta a partir dos relatórios
+const { updatePerson } = usePeople()
+const toast = useToast()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
 const formatDateBR = (value) => {
@@ -232,6 +242,87 @@ const detailTabs = [
 ]
 const activeDetailTab = ref('revisions')
 
+// ---------------------------------------------------------------------
+// MODAL DE REVISÕES — aberto ao clicar em uma linha das tabelas de revisões/veículos
+// ---------------------------------------------------------------------
+const isRevisionsModalOpen = ref(false)
+const selectedPerson = ref(null)
+const highlightVehicleId = ref(null)
+const highlightRevisionId = ref(null)
+
+const openRevisionsModal = ({ personId, personName, vehicleId = null, revisionId = null }) => {
+  if (!personId) return // sem person_id não dá pra abrir o modal
+  selectedPerson.value = { id: personId, name: personName }
+  highlightVehicleId.value = vehicleId
+  highlightRevisionId.value = revisionId
+  isRevisionsModalOpen.value = true
+}
+
+const closeRevisionsModal = () => {
+  isRevisionsModalOpen.value = false
+  selectedPerson.value = null
+  highlightVehicleId.value = null
+  highlightRevisionId.value = null
+}
+
+// "Tempo médio entre revisões" — sem revisão específica, abre a listagem normal da pessoa
+const handleAvgIntervalRowClick = (row) => {
+  openRevisionsModal({ personId: row.person_id, personName: row.person_name })
+}
+
+// "Revisões no período selecionado" — tem a revisão exata, abre já em modo edição
+const handleRevisionsByPeriodRowClick = (row) => {
+  openRevisionsModal({
+    personId: row.person_id,
+    personName: row.person_name,
+    vehicleId: row.vehicle_id,
+    revisionId: row.revision_id,
+  })
+}
+
+// "Todos os veículos por pessoa" — sem revisão específica, abre a listagem normal da pessoa
+const handleVehiclesByPersonRowClick = (row) => {
+  openRevisionsModal({ personId: row.person_id, personName: row.person_name })
+}
+
+// ---------------------------------------------------------------------
+// MODAL DE CADASTRO/EDIÇÃO DE PESSOA — aberto ao clicar em uma linha da aba "Pessoas"
+// ---------------------------------------------------------------------
+const isPersonModalOpen = ref(false)
+const editingPerson = ref(null)
+const isSubmittingPerson = ref(false)
+
+const openPersonModal = (person) => {
+  editingPerson.value = person
+  isPersonModalOpen.value = true
+}
+
+const closePersonModal = () => {
+  isPersonModalOpen.value = false
+  editingPerson.value = null
+}
+
+const handlePersonSubmit = async (payload) => {
+  isSubmittingPerson.value = true
+  try {
+    await updatePerson(editingPerson.value.id, payload)
+    toast.success('Pessoa atualizada com sucesso!')
+    closePersonModal()
+    // recarrega a página atual da tabela pra refletir a edição
+    await fetchAllPeople(pagination.allPeople.currentPage)
+  } catch (error) {
+    const rawMessage = error.response?.data?.message ?? error.response?.data?.error
+    toast.error(rawMessage || 'Não foi possível salvar a pessoa.')
+  } finally {
+    isSubmittingPerson.value = false
+  }
+}
+
+// "Todas as pessoas" — abre o modal de edição da pessoa clicada
+const handleAllPeopleRowClick = (row) => {
+  openPersonModal(row)
+}
+
 onMounted(loadAll)
 </script>
 
@@ -382,7 +473,9 @@ onMounted(loadAll)
             :rows="data.avgIntervalByPerson"
             :pagination="pagination.avgIntervalByPerson"
             :loading="tableLoading.avgIntervalByPerson"
+            row-clickable
             @page-change="handleAvgIntervalPage"
+            @row-click="handleAvgIntervalRowClick"
           />
         </ReportPanel>
 
@@ -401,7 +494,9 @@ onMounted(loadAll)
             :rows="revisionsByPeriodFormatted"
             :pagination="pagination.revisionsByPeriod"
             :loading="tableLoading.revisionsByPeriod"
+            row-clickable
             @page-change="handleRevisionsByPeriodPage"
+            @row-click="handleRevisionsByPeriodRowClick"
           />
         </ReportPanel>
       </div>
@@ -417,7 +512,9 @@ onMounted(loadAll)
           :rows="data.vehiclesByPerson"
           :pagination="pagination.vehiclesByPerson"
           :loading="tableLoading.vehiclesByPerson"
+          row-clickable
           @page-change="handleVehiclesByPersonPage"
+          @row-click="handleVehiclesByPersonRowClick"
         />
       </ReportPanel>
 
@@ -431,9 +528,28 @@ onMounted(loadAll)
           :rows="allPeopleFormatted"
           :pagination="pagination.allPeople"
           :loading="tableLoading.allPeople"
+          row-clickable
           @page-change="handleAllPeoplePage"
+          @row-click="handleAllPeopleRowClick"
         />
       </ReportPanel>
     </template>
+
+    <RevisionsModal
+      v-if="isRevisionsModalOpen"
+      :person="selectedPerson"
+      :highlight-vehicle-id="highlightVehicleId"
+      :highlight-revision-id="highlightRevisionId"
+      @close="closeRevisionsModal"
+      @register-vehicle="closeRevisionsModal"
+    />
+
+    <PersonFormModal
+      v-if="isPersonModalOpen"
+      :person="editingPerson"
+      :is-submitting="isSubmittingPerson"
+      @close="closePersonModal"
+      @submit="handlePersonSubmit"
+    />
   </AppShell>
 </template>
