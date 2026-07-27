@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Users, Plus, Pencil, Trash2, Car, Wrench, Mail, Phone, IdCard, Search, X, ChevronLeft, ChevronRight } from '@lucide/vue'
+import { Users, Plus, Pencil, Trash2, Car, Wrench, Mail, Phone, IdCard, Search, X, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import EmptyState from '../components/dashboard/EmptyState.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -75,6 +75,38 @@ const clearFilters = async () => {
   await clearFiltersRequest()
 }
 // --- fim filtros ---
+
+// --- Ordenação (client-side, sobre a página atual) ---
+const sortField = ref(null) // 'name' | 'email' | 'phone' | 'document' | null
+const sortDirection = ref('asc') // 'asc' | 'desc'
+
+const toggleSort = (field) => {
+  if (sortField.value === field) {
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortField.value = field
+    sortDirection.value = 'asc'
+  }
+}
+
+const sortIconFor = (field) => {
+  if (sortField.value !== field) return ArrowUpDown
+  return sortDirection.value === 'asc' ? ArrowUp : ArrowDown
+}
+
+const sortedPeople = computed(() => {
+  if (!sortField.value) return people.value
+  const field = sortField.value
+  const dir = sortDirection.value === 'asc' ? 1 : -1
+  return [...people.value].sort((a, b) => {
+    const valA = (a[field] ?? '').toString().toLowerCase()
+    const valB = (b[field] ?? '').toString().toLowerCase()
+    if (valA < valB) return -1 * dir
+    if (valA > valB) return 1 * dir
+    return 0
+  })
+})
+// --- fim ordenação ---
 
 // --- Avatar ---
 const getInitials = (name) => {
@@ -336,7 +368,7 @@ const sanitizeNumericFilter = (field) => {
         <!-- mobile: cards -->
         <div class="flex flex-col gap-3 sm:hidden">
           <div
-            v-for="person in people"
+            v-for="person in sortedPeople"
             :key="person.id"
             class="rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03] transition-shadow active:shadow-none"
           >
@@ -405,16 +437,36 @@ const sanitizeNumericFilter = (field) => {
             <table class="w-full text-left text-sm">
               <thead class="bg-ink-50/60">
                 <tr>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Nome</th>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">E-mail</th>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Telefone</th>
-                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">CPF/CNPJ</th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">
+                    <button type="button" class="inline-flex items-center gap-1 hover:text-ink-600" @click="toggleSort('name')">
+                      Nome
+                      <component :is="sortIconFor('name')" :size="12" :class="sortField === 'name' ? 'text-brand-600' : 'text-ink-300'" />
+                    </button>
+                  </th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">
+                    <button type="button" class="inline-flex items-center gap-1 hover:text-ink-600" @click="toggleSort('email')">
+                      E-mail
+                      <component :is="sortIconFor('email')" :size="12" :class="sortField === 'email' ? 'text-brand-600' : 'text-ink-300'" />
+                    </button>
+                  </th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">
+                    <button type="button" class="inline-flex items-center gap-1 hover:text-ink-600" @click="toggleSort('phone')">
+                      Telefone
+                      <component :is="sortIconFor('phone')" :size="12" :class="sortField === 'phone' ? 'text-brand-600' : 'text-ink-300'" />
+                    </button>
+                  </th>
+                  <th class="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-ink-400">
+                    <button type="button" class="inline-flex items-center gap-1 hover:text-ink-600" @click="toggleSort('document')">
+                      CPF/CNPJ
+                      <component :is="sortIconFor('document')" :size="12" :class="sortField === 'document' ? 'text-brand-600' : 'text-ink-300'" />
+                    </button>
+                  </th>
                   <th class="px-5 py-3.5 text-right text-[11px] font-semibold uppercase tracking-wider text-ink-400">Ações</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-ink-100/60">
                 <tr
-                  v-for="person in people"
+                  v-for="person in sortedPeople"
                   :key="person.id"
                   class="group text-ink-700 transition-colors hover:bg-ink-50/50"
                 >
