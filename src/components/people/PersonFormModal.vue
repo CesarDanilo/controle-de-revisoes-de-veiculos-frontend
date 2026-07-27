@@ -55,14 +55,17 @@ const pfFieldsCache = reactive({
 })
 // ------------------------------------------------------------------------------------
 
+// O snapshot precisa ser normalizado do mesmo jeito que buildComparablePayload():
+// para PJ, gender/birth_date não existem, então precisam nascer como null/''
+// aqui também — senão a comparação nunca bate e o botão fica sempre liberado.
 const originalSnapshot = isEditing
   ? {
       name: form.name.trim(),
       email: form.email.trim(),
       phone: form.phone,
       document: form.document,
-      gender: form.gender,
-      birth_date: form.birth_date,
+      gender: personType.value === 'PF' ? form.gender : null,
+      birth_date: personType.value === 'PF' ? form.birth_date : '',
     }
   : null
 
@@ -77,11 +80,14 @@ function buildComparablePayload() {
   }
 }
 
-function hasChanges() {
+// ---- Reativo: reflete se algo mudou em relação ao snapshot original ----
+// Usado tanto no botão (isSubmitDisabled) quanto no handleSubmit.
+const formHasChanges = computed(() => {
   if (!originalSnapshot) return true
   const current = buildComparablePayload()
   return Object.keys(current).some((key) => current[key] !== originalSnapshot[key])
-}
+})
+// ------------------------------------------------------------------------
 
 const phoneModel = computed({
   get: () => maskPhone(form.phone),
@@ -418,7 +424,7 @@ const handleSubmit = async () => {
 
   fieldErrors.value = {}
 
-  if (isEditing && !hasChanges()) {
+  if (isEditing && !formHasChanges.value) {
     toast.info('Nenhuma alteração foi feita.')
     return
   }
@@ -438,7 +444,8 @@ const handleSubmit = async () => {
 }
 
 // botão só libera se: não está enviando, email não está "checking",
-// email verificado, CPF/CNPJ não está "checking", e CPF/CNPJ verificado
+// email verificado, CPF/CNPJ não está "checking", CPF/CNPJ verificado,
+// e — se estiver editando — algo realmente mudou em relação ao original
 const isSubmitDisabled = computed(() => {
   return (
     isSubmitting.value ||
@@ -447,7 +454,8 @@ const isSubmitDisabled = computed(() => {
     cpfStatus.value === 'checking' ||
     !isCpfVerified.value ||
     cnpjStatus.value === 'checking' ||
-    !isCnpjVerified.value
+    !isCnpjVerified.value ||
+    (isEditing && !formHasChanges.value)
   )
 })
 
