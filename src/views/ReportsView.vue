@@ -428,7 +428,7 @@ const exportToPDF = async () => {
       addCanvasPaginated(pdf, detailCanvas)
     }
 
-    pdf.save(`relatorio-motor-hero-${toISODate(new Date())}.pdf`)
+    pdf.save(`relatorio-geral-${toISODate(new Date())}.pdf`)
   } catch (error) {
     console.error('Erro ao gerar PDF:', error)
     toast.error(`Não foi possível gerar o PDF: ${error?.message || 'erro desconhecido'}`)
