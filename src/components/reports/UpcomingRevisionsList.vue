@@ -22,11 +22,11 @@ const STATUS_STYLE = {
     Nenhuma revisão prevista no momento.
   </div>
 
-  <ul v-else class="flex flex-col divide-y divide-ink-100 hover:bg-zinc-100 rounded-lg px-2 py-3">
+  <ul v-else class="flex flex-col divide-y divide-ink-100 rounded-lg px-2 py-3 gap-2">
     <li
       v-for="(item, index) in items"
       :key="item.revision_id ?? `${item.person_name}-${item.vehicle}-${index}`"
-      class="-mx-2 flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-lg px-2 py-3 transition-colors first:pt-0 last:pb-0 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      class="-mx-2 flex cursor-pointer flex-wrap items-center justify-between gap-2 hover:bg-zinc-100 rounded-lg px-2 py-3 transition-colors first:pt-0 last:pb-0 hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
       tabindex="0"
       role="button"
       :aria-label="`Ver revisões de ${item.person_name} — ${item.vehicle}`"
