@@ -1,7 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
-import { Car, TrendingUp } from '@lucide/vue'
+import { Car, TrendingUp, ArrowUpRight } from '@lucide/vue'
 import { reportService } from '../../services/report.service'
 
 const emit = defineEmits(['edit-vehicle'])
@@ -62,8 +62,21 @@ const handleSelect = (prediction) => {
 
 <template>
   <div class="rounded-2xl border border-ink-100 bg-white p-6">
-    <h2 class="text-base font-bold text-ink-900">Próximas revisões (previsão)</h2>
-    <p class="mt-1 text-sm text-ink-500">Data informada ou, na ausência dela, estimada pelo intervalo médio.</p>
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <h2 class="text-base font-bold text-ink-900">Próximas revisões (previsão)</h2>
+        <p class="mt-1 text-sm text-ink-500">Data informada ou, na ausência dela, estimada pelo intervalo médio.</p>
+      </div>
+
+      <!-- 🟢 NOVO — atalho pra tela de relatórios, que tem o detalhamento completo -->
+      <router-link
+        to="/relatorios#proximas-revisoes"
+        class="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-brand-600 transition-colors hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      >
+        Ver relatórios
+        <ArrowUpRight :size="14" />
+      </router-link>
+    </div>
 
     <!-- Loading -->
     <div v-if="isLoading" class="mt-5 flex flex-col gap-3">

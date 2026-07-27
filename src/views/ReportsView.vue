@@ -1,5 +1,6 @@
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   BarChart3, Car, Users, Wrench, Calendar,
   DollarSign, Receipt, AlertCircle, RefreshCw, Download,
@@ -47,6 +48,7 @@ const {
 // 🔴 AQUI — usado apenas para salvar a edição de pessoa aberta a partir dos relatórios
 const { updatePerson } = usePeople()
 const toast = useToast()
+const route = useRoute()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
 const formatDateBR = (value) => {
@@ -248,6 +250,31 @@ const detailTabs = [
   { key: 'people', label: 'Pessoas', icon: Users },
 ]
 const activeDetailTab = ref('revisions')
+
+// ---------------------------------------------------------------------
+// SCROLL AUTOMÁTICO PARA SEÇÃO VIA ÂNCORA (#proximas-revisoes)
+// ---------------------------------------------------------------------
+// 🟢 NOVO — usado pelo link "Ver relatórios" do UpcomingRevisionsCard, no
+// Dashboard, que navega pra cá com a âncora "#proximas-revisoes". Só rola
+// depois que os dados terminam de carregar (senão a seção ainda não está
+// na posição final, e o scroll erra o alvo).
+const scrollToHashSection = async () => {
+  if (!route.hash) return
+
+  await nextTick()
+  const el = document.querySelector(route.hash)
+  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// cobre o caso de vir de outra rota com o hash já na URL, ou de já estar em
+// /relatorios e clicar de novo no link (o hash muda mas o componente não remonta)
+watch(() => route.hash, scrollToHashSection)
+
+// cobre o caso de a página já estar carregada (ex: cache do vue-query) e o
+// hash já vir presente logo no mount
+watch(isLoading, (loading) => {
+  if (!loading) scrollToHashSection()
+})
 
 // ---------------------------------------------------------------------
 // MODAL DE REVISÕES — aberto ao clicar em uma linha das tabelas de revisões
@@ -567,10 +594,13 @@ onMounted(loadAll)
         </div>
 
         <!-- ====== ALERTAS / PRÓXIMAS REVISÕES ====== -->
+        <!-- 🟢 NOVO — id usado como âncora de scroll (#proximas-revisoes),
+             alvo do link "Ver relatórios" no UpcomingRevisionsCard do Dashboard -->
         <ReportPanel
+          id="proximas-revisoes"
           title="Próximas revisões"
           description="Valor informado no cadastro ou, na ausência dele, estimativa com base no histórico do veículo."
-          class="mb-8"
+          class="mb-8 scroll-mt-6"
         >
           <UpcomingRevisionsPanel :items="upcomingWithStatus" />
         </ReportPanel>
