@@ -34,6 +34,9 @@ const editingVehicleId = ref(null)
 // snapshot normalizado do veículo original (usado pra detectar o que mudou)
 const originalSnapshot = ref(null)
 
+// 🔴 AQUI — snapshot bruto (sem validação) só pra controlar o estado do botão em tempo real
+const originalRawSnapshot = ref(null)
+
 const vehicles = ref([])
 const isLoadingVehicles = ref(true)
 
@@ -61,6 +64,21 @@ const vehicleToDelete = ref(null)
 const isDeleting = ref(false)
 
 const isEditing = computed(() => editingVehicleId.value !== null)
+
+// 🔴 AQUI — true quando está editando e nenhum campo foi alterado ainda
+const isUnchanged = computed(() => {
+  if (!isEditing.value || !originalRawSnapshot.value) return false
+
+  const currentRaw = JSON.stringify({
+    model: form.model,
+    year: form.year,
+    color_id: form.color_id,
+    brand_id: form.brand_id,
+    license_plate: form.license_plate,
+  })
+
+  return currentRaw === originalRawSnapshot.value
+})
 
 const brandName = (brandId) => brands.value.find((b) => b.id === brandId)?.name ?? '—'
 const colorName = (colorId) => colors.value.find((c) => c.id === colorId)?.name ?? '—'
@@ -102,6 +120,7 @@ const resetForm = () => {
   Object.assign(form, emptyForm())
   editingVehicleId.value = null
   originalSnapshot.value = null
+  originalRawSnapshot.value = null // 🔴 AQUI
   fieldErrors.value = {}
 }
 
@@ -118,6 +137,15 @@ const selectForEdit = (vehicle) => {
   // normaliza o estado original pelo mesmo schema, pra comparar "de igual pra igual" depois
   const parsed = vehicleSchema.safeParse(form)
   originalSnapshot.value = parsed.success ? parsed.data : null
+
+  // 🔴 AQUI — snapshot bruto do formulário logo após popular os campos, usado pro botão
+  originalRawSnapshot.value = JSON.stringify({
+    model: form.model,
+    year: form.year,
+    color_id: form.color_id,
+    brand_id: form.brand_id,
+    license_plate: form.license_plate,
+  })
 }
 
 // retorna só as chaves que mudaram entre o snapshot original e os dados validados atuais
@@ -813,7 +841,7 @@ const handleLicensePlatePaste = (event) => {
             <BaseButton v-if="isEditing" type="button" variant="ghost" @click="resetForm">
               Cancelar edição
             </BaseButton>
-            <BaseButton type="submit" :disabled="isSubmitting">
+            <BaseButton type="submit" :disabled="isSubmitting || isUnchanged">
               {{ isSubmitting ? 'Salvando...' : isEditing ? 'Salvar alterações' : 'Cadastrar' }}
             </BaseButton>
           </div>
