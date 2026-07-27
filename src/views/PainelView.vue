@@ -49,30 +49,39 @@ watch(summaryError, (err) => {
 // summary em vez de listas completas.
 const isLoading = computed(() => peopleLoading.value || summaryLoading.value)
 
+// 🟢 ALTERADO — cada card agora só leva um link interno "Ver relatório"
+// (renderizado pelo próprio StatCard via prop "to"), não o card inteiro
+// clicável. As âncoras "#aba-*" trocam a aba de detalhe ativa em
+// ReportsView.vue antes de rolar (ver TAB_HASH_MAP lá); "#proximas-revisoes"
+// e "#secao-financeiro" são seções fixas, mesmo padrão de sempre.
 const stats = computed(() => [
   {
     label: 'Pessoas',
     value: String(summary.value?.people_count ?? 0),
     icon: Users,
     loading: summaryLoading.value,
+    to: '/relatorios#aba-pessoas',
   },
   {
     label: 'Veículos',
     value: String(summary.value?.vehicles_count ?? 0),
     icon: Car,
     loading: summaryLoading.value,
+    to: '/relatorios#aba-veiculos',
   },
   {
     label: 'Revisões',
     value: String(summary.value?.revisions_count ?? 0),
     icon: Wrench,
     loading: summaryLoading.value,
+    to: '/relatorios#proximas-revisoes',
   },
   {
     label: 'Investido',
     value: formatCurrency(summary.value?.total_invested ?? 0),
     icon: Wallet,
     loading: summaryLoading.value,
+    to: '/relatorios#secao-financeiro',
   },
 ])
 
@@ -139,7 +148,15 @@ const closeVehicleFormModal = () => {
     </template>
 
     <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <StatCard v-for="stat in stats" :key="stat.label" v-bind="stat" />
+      <StatCard
+        v-for="stat in stats"
+        :key="stat.label"
+        :label="stat.label"
+        :value="stat.value"
+        :icon="stat.icon"
+        :loading="stat.loading"
+        :to="stat.to"
+      />
     </section>
 
     <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">

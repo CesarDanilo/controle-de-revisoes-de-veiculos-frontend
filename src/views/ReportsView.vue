@@ -252,17 +252,34 @@ const detailTabs = [
 const activeDetailTab = ref('revisions')
 
 // ---------------------------------------------------------------------
-// SCROLL AUTOMÁTICO PARA SEÇÃO VIA ÂNCORA (#proximas-revisoes)
+// SCROLL AUTOMÁTICO PARA SEÇÃO VIA ÂNCORA
 // ---------------------------------------------------------------------
-// 🟢 NOVO — usado pelo link "Ver relatórios" do UpcomingRevisionsCard, no
-// Dashboard, que navega pra cá com a âncora "#proximas-revisoes". Só rola
-// depois que os dados terminam de carregar (senão a seção ainda não está
-// na posição final, e o scroll erra o alvo).
+// 🟢 NOVO — usado pelos links "Ver relatório" dos StatCards no Dashboard e
+// pelo link "Ver relatórios" do UpcomingRevisionsCard.
+//
+// Duas famílias de âncora:
+// - Seções fixas, sempre no DOM: "#proximas-revisoes", "#secao-financeiro"
+//   -> só rola até o id.
+// - Abas de detalhe, controladas por estado (activeDetailTab), não por
+//   rota: "#aba-veiculos", "#aba-pessoas", "#aba-revisoes" -> primeiro
+//   troca a aba ativa, só então rola até o container "#secao-detalhes"
+//   (só a aba ativa está no DOM por vez, então não dá pra apontar um id
+//   fixo direto pra dentro de cada aba).
+const TAB_HASH_MAP = {
+  '#aba-revisoes': 'revisions',
+  '#aba-veiculos': 'vehicles',
+  '#aba-pessoas': 'people',
+}
+
 const scrollToHashSection = async () => {
   if (!route.hash) return
 
+  const tabKey = TAB_HASH_MAP[route.hash]
+  if (tabKey) activeDetailTab.value = tabKey
+
   await nextTick()
-  const el = document.querySelector(route.hash)
+  const targetId = tabKey ? 'secao-detalhes' : route.hash.slice(1)
+  const el = document.getElementById(targetId)
   el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
@@ -548,7 +565,13 @@ onMounted(loadAll)
         </div>
 
         <!-- ====== KPIs ====== -->
-        <div class="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))">
+        <!-- 🟢 id usado como âncora de scroll (#secao-financeiro),
+             alvo do card "Investido" no Dashboard -->
+        <div
+          id="secao-financeiro"
+          class="mb-8 scroll-mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+          style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))"
+        >
           <KpiCard label="Revisões" :value="kpiTotalRevisoes" :icon="Wrench" accent="brand" :loading="isLoading" />
           <KpiCard label="Veículos atendidos" :value="kpiVeiculosAtendidos" :icon="Car" accent="neutral" :loading="isLoading" />
           <KpiCard label="Clientes atendidos" :value="kpiClientesAtendidos" :icon="Users" accent="neutral" :loading="isLoading" />
@@ -594,8 +617,9 @@ onMounted(loadAll)
         </div>
 
         <!-- ====== ALERTAS / PRÓXIMAS REVISÕES ====== -->
-        <!-- 🟢 NOVO — id usado como âncora de scroll (#proximas-revisoes),
-             alvo do link "Ver relatórios" no UpcomingRevisionsCard do Dashboard -->
+        <!-- 🟢 id usado como âncora de scroll (#proximas-revisoes),
+             alvo do link "Ver relatórios" no UpcomingRevisionsCard e do
+             card "Revisões" no Dashboard -->
         <ReportPanel
           id="proximas-revisoes"
           title="Próximas revisões"
@@ -607,96 +631,102 @@ onMounted(loadAll)
       </div>
 
       <!-- ====== TABELAS DETALHADAS ====== -->
-      <div class="mb-4 flex gap-2 border-b border-ink-100">
-        <button
-          v-for="tab in detailTabs"
-          :key="tab.key"
-          type="button"
-          class="flex items-center gap-2 border-b-2 px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
-          :class="
-            activeDetailTab === tab.key
-              ? 'border-brand-600 text-brand-600'
-              : 'border-transparent text-ink-400 hover:text-ink-700'
-          "
-          :aria-pressed="activeDetailTab === tab.key"
-          @click="activeDetailTab = tab.key"
-        >
-          <component :is="tab.icon" :size="15" />
-          {{ tab.label }}
-        </button>
-      </div>
+      <!-- 🟢 NOVO — id usado como âncora de scroll ("#secao-detalhes"),
+           alvo indireto dos cards "Pessoas" e "Veículos" no Dashboard.
+           Eles apontam pra "#aba-pessoas" / "#aba-veiculos", que trocam
+           activeDetailTab (ver TAB_HASH_MAP) e então rolam pra cá. -->
+      <div id="secao-detalhes" class="scroll-mt-6">
+        <div class="mb-4 flex gap-2 border-b border-ink-100">
+          <button
+            v-for="tab in detailTabs"
+            :key="tab.key"
+            type="button"
+            class="flex items-center gap-2 border-b-2 px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
+            :class="
+              activeDetailTab === tab.key
+                ? 'border-brand-600 text-brand-600'
+                : 'border-transparent text-ink-400 hover:text-ink-700'
+            "
+            :aria-pressed="activeDetailTab === tab.key"
+            @click="activeDetailTab = tab.key"
+          >
+            <component :is="tab.icon" :size="15" />
+            {{ tab.label }}
+          </button>
+        </div>
 
-      <div ref="detailRef">
-        <div v-if="activeDetailTab === 'revisions'" class="flex flex-col gap-6">
-          <ReportPanel title="Tempo médio entre revisões" description="Média de dias entre visitas, por pessoa (considerando todos os veículos dela)">
+        <div ref="detailRef">
+          <div v-if="activeDetailTab === 'revisions'" class="flex flex-col gap-6">
+            <ReportPanel title="Tempo médio entre revisões" description="Média de dias entre visitas, por pessoa (considerando todos os veículos dela)">
+              <ReportTable
+                :columns="[
+                  { key: 'person_name', label: 'Pessoa' },
+                  { key: 'avg_days', label: 'Média (dias)' },
+                ]"
+                :rows="data.avgIntervalByPerson"
+                :pagination="pagination.avgIntervalByPerson"
+                :loading="tableLoading.avgIntervalByPerson"
+                row-clickable
+                @page-change="handleAvgIntervalPage"
+                @row-click="handleAvgIntervalRowClick"
+              />
+            </ReportPanel>
+
+            <ReportPanel title="Revisões no período selecionado">
+              <p v-if="!revisionsByPeriodFormatted.length" class="py-6 text-center text-sm text-ink-400">
+                Nenhuma revisão encontrada nesse período.
+              </p>
+              <ReportTable
+                v-else
+                :columns="[
+                  { key: 'date', label: 'Data' },
+                  { key: 'person_name', label: 'Pessoa' },
+                  { key: 'vehicle', label: 'Veículo' },
+                  { key: 'description', label: 'Descrição' },
+                ]"
+                :rows="revisionsByPeriodFormatted"
+                :pagination="pagination.revisionsByPeriod"
+                :loading="tableLoading.revisionsByPeriod"
+                row-clickable
+                @page-change="handleRevisionsByPeriodPage"
+                @row-click="handleRevisionsByPeriodRowClick"
+              />
+            </ReportPanel>
+          </div>
+
+          <ReportPanel v-else-if="activeDetailTab === 'vehicles'" title="Todos os veículos por pessoa">
             <ReportTable
               :columns="[
-                { key: 'person_name', label: 'Pessoa' },
-                { key: 'avg_days', label: 'Média (dias)' },
+                { key: 'person_name', label: 'Proprietário' },
+                { key: 'plate', label: 'Placa' },
+                { key: 'model', label: 'Modelo' },
+                { key: 'brand', label: 'Marca' },
               ]"
-              :rows="data.avgIntervalByPerson"
-              :pagination="pagination.avgIntervalByPerson"
-              :loading="tableLoading.avgIntervalByPerson"
+              :rows="data.vehiclesByPerson"
+              :pagination="pagination.vehiclesByPerson"
+              :loading="tableLoading.vehiclesByPerson"
               row-clickable
-              @page-change="handleAvgIntervalPage"
-              @row-click="handleAvgIntervalRowClick"
+              @page-change="handleVehiclesByPersonPage"
+              @row-click="handleVehiclesByPersonRowClick"
             />
           </ReportPanel>
 
-          <ReportPanel title="Revisões no período selecionado">
-            <p v-if="!revisionsByPeriodFormatted.length" class="py-6 text-center text-sm text-ink-400">
-              Nenhuma revisão encontrada nesse período.
-            </p>
+          <ReportPanel v-else title="Todas as pessoas">
             <ReportTable
-              v-else
               :columns="[
-                { key: 'date', label: 'Data' },
-                { key: 'person_name', label: 'Pessoa' },
-                { key: 'vehicle', label: 'Veículo' },
-                { key: 'description', label: 'Descrição' },
+                { key: 'name', label: 'Nome' },
+                { key: 'email', label: 'E-mail' },
+                { key: 'phone', label: 'Telefone' },
               ]"
-              :rows="revisionsByPeriodFormatted"
-              :pagination="pagination.revisionsByPeriod"
-              :loading="tableLoading.revisionsByPeriod"
+              :rows="allPeopleFormatted"
+              :pagination="pagination.allPeople"
+              :loading="tableLoading.allPeople"
               row-clickable
-              @page-change="handleRevisionsByPeriodPage"
-              @row-click="handleRevisionsByPeriodRowClick"
+              @page-change="handleAllPeoplePage"
+              @row-click="handleAllPeopleRowClick"
             />
           </ReportPanel>
         </div>
-
-        <ReportPanel v-else-if="activeDetailTab === 'vehicles'" title="Todos os veículos por pessoa">
-          <ReportTable
-            :columns="[
-              { key: 'person_name', label: 'Proprietário' },
-              { key: 'plate', label: 'Placa' },
-              { key: 'model', label: 'Modelo' },
-              { key: 'brand', label: 'Marca' },
-            ]"
-            :rows="data.vehiclesByPerson"
-            :pagination="pagination.vehiclesByPerson"
-            :loading="tableLoading.vehiclesByPerson"
-            row-clickable
-            @page-change="handleVehiclesByPersonPage"
-            @row-click="handleVehiclesByPersonRowClick"
-          />
-        </ReportPanel>
-
-        <ReportPanel v-else title="Todas as pessoas">
-          <ReportTable
-            :columns="[
-              { key: 'name', label: 'Nome' },
-              { key: 'email', label: 'E-mail' },
-              { key: 'phone', label: 'Telefone' },
-            ]"
-            :rows="allPeopleFormatted"
-            :pagination="pagination.allPeople"
-            :loading="tableLoading.allPeople"
-            row-clickable
-            @page-change="handleAllPeoplePage"
-            @row-click="handleAllPeopleRowClick"
-          />
-        </ReportPanel>
       </div>
     </template>
 

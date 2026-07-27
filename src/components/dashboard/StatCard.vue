@@ -1,9 +1,12 @@
 <script setup>
+import { ArrowUpRight } from '@lucide/vue'
+
 defineProps({
   label: { type: String, required: true },
   value: { type: String, required: true },
   icon: { type: [Object, Function], required: true },
   loading: { type: Boolean, default: false },
+  to: { type: String, default: null },
 })
 </script>
 
@@ -23,5 +26,15 @@ defineProps({
       />
       <p v-else class="text-3xl font-extrabold tracking-tight text-ink-900">{{ value }}</p>
     </div>
+
+    <!-- 🟢 NOVO — mesmo padrão do link "Ver relatórios" do UpcomingRevisionsCard -->
+    <router-link
+      v-if="to"
+      :to="to"
+      class="mt-4 flex w-fit items-center gap-1 rounded-lg text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+    >
+      Ver relatório
+      <ArrowUpRight :size="12" />
+    </router-link>
   </div>
 </template>
