@@ -1,17 +1,18 @@
 <script setup>
 import { computed } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 import { Car, TrendingUp } from '@lucide/vue'
-
-const props = defineProps({
-  vehicles: { type: Array, default: () => [] },
-  people: { type: Array, default: () => [] },
-  revisions: { type: Array, default: () => [] },
-  isLoading: { type: Boolean, default: false },
-})
+import { reportService } from '../../services/report.service'
 
 const emit = defineEmits(['edit-vehicle'])
 
-const MS_PER_DAY = 1000 * 60 * 60 * 24
+// 🟢 NOVO — o componente agora busca seus próprios dados, já prontos
+// (previsão calculada em SQL no backend, não mais em JS aqui). Não recebe
+// mais "vehicles" / "people" / "revisions" como props.
+const { data, isLoading } = useQuery({
+  queryKey: ['upcoming-revisions'],
+  queryFn: () => reportService.getUpcomingRevisions({ per_page: 6 }),
+})
 
 // 🔴 AQUI — FIX timezone: strings "yyyy-mm-dd" vindas da API não têm hora,
 // então `new Date(str)` interpreta como meia-noite UTC. Ao converter pra
@@ -31,77 +32,31 @@ const isOverdue = (date) => {
   return date < today
 }
 
-// One prediction per vehicle:
-// - se a última revisão tem "next_revision_date" informado, usa ele direto (data exata);
-// - senão, estima pela média de intervalo entre as revisões (precisa de pelo menos 2).
-const predictions = computed(() => {
-  const results = []
-
-  for (const vehicle of props.vehicles) {
-    const vehicleRevisions = props.revisions
-      .filter((r) => r.vehicle_id === vehicle.id && r.revision_date)
-      .map((r) => ({ ...r, revision_date: parseLocalDate(r.revision_date) }))
-      .sort((a, b) => a.revision_date - b.revision_date)
-
-    if (vehicleRevisions.length === 0) continue
-
-    const lastRevision = vehicleRevisions[vehicleRevisions.length - 1]
-
-    // 🔴 AQUI — data da próxima revisão informada manualmente (prioridade
-    // máxima, é um valor exato e não uma estimativa)
-    const informedDate = lastRevision.next_revision_date
-      ? parseLocalDate(lastRevision.next_revision_date)
-      : null
-
-    // 🔴 AQUI — só calcula a média se houver pelo menos 2 revisões no
-    // histórico; do contrário fica null (sem estimativa possível)
-    let avgDays = null
-    if (vehicleRevisions.length >= 2) {
-      let totalDays = 0
-      for (let i = 1; i < vehicleRevisions.length; i++) {
-        totalDays += (vehicleRevisions[i].revision_date - vehicleRevisions[i - 1].revision_date) / MS_PER_DAY
-      }
-      avgDays = Math.round(totalDays / (vehicleRevisions.length - 1))
-    }
-
-    // Sem data informada e sem histórico suficiente pra estimar: não dá pra prever esse veículo.
-    if (!informedDate && avgDays === null) continue
-
-    // 🔴 AQUI — a data da PRÓXIMA revisão: usa a informada; se não houver,
-    // estima a partir da última revisão + média de dias
-    const predictedDate = informedDate ?? (() => {
-      const d = new Date(lastRevision.revision_date)
-      d.setDate(d.getDate() + avgDays)
-      return d
-    })()
-
-    const isEstimated = !informedDate
-
-    const person = props.people.find((p) => p.id === vehicle.people_id)
-
-    results.push({
-      vehicleId: vehicle.id,
-      vehicle, // objeto completo, usado no clique para abrir o modal em modo edição
-      // 🔴 AQUI — id da última revisão real (a que gerou a previsão), usado
-      // para abrir o RevisionsModal já em modo edição, pré-preenchido com
-      // os dados dela
-      lastRevisionId: lastRevision.id,
-      vehicleLabel: `${vehicle.model} · ${vehicle.license_plate}`,
-      personName: person?.name || '—',
-      avgDays,
-      predictedDate,
-      isEstimated,
-      revisionCount: vehicleRevisions.length,
-    })
-  }
-
-  return results.sort((a, b) => a.predictedDate - b.predictedDate)
-})
+// 🟢 NOVO — só mapeia o formato que a API já manda, sem recalcular nada
+const predictions = computed(() =>
+  (data.value ?? []).map((item) => ({
+    vehicleId: item.vehicle_id,
+    personId: item.person_id,
+    // usado pelo pai pra abrir o RevisionsModal já em modo edição
+    lastRevisionId: item.revision_id,
+    vehicleLabel: item.vehicle_plate ? `${item.vehicle} · ${item.vehicle_plate}` : item.vehicle,
+    personName: item.person_name || '—',
+    avgDays: item.avg_interval_days,
+    predictedDate: parseLocalDate(item.predicted_date),
+    isEstimated: item.is_estimated_date,
+  }))
+)
 
 const handleSelect = (prediction) => {
-  // 🔴 AQUI — agora emite também o id da revisão, pro pai poder abrir o
-  // modal já em modo edição nessa revisão específica
-  emit('edit-vehicle', prediction.vehicle, prediction.lastRevisionId)
+  // 🟡 ALTERADO — antes emitia o objeto "vehicle" inteiro; agora emite os
+  // IDs (vehicleId, personId, lastRevisionId), já que o card não tem mais
+  // os objetos completos de vehicle/people. O Dashboard.vue precisa ser
+  // ajustado pra receber esse novo formato (ver openRevisionsModal).
+  emit('edit-vehicle', {
+    vehicleId: prediction.vehicleId,
+    personId: prediction.personId,
+    revisionId: prediction.lastRevisionId,
+  })
 }
 </script>
 
@@ -123,7 +78,7 @@ const handleSelect = (prediction) => {
     <!-- Predictions -->
     <ul v-else class="mt-5 flex flex-col divide-y divide-ink-100">
       <li
-        v-for="prediction in predictions.slice(0, 6)"
+        v-for="prediction in predictions"
         :key="prediction.vehicleId"
         role="button"
         tabindex="0"
@@ -156,9 +111,5 @@ const handleSelect = (prediction) => {
         </div>
       </li>
     </ul>
-
-    <p v-if="predictions.length > 6" class="mt-3 text-xs text-ink-400">
-      +{{ predictions.length - 6 }} veículo(s) com previsão calculada.
-    </p>
   </div>
 </template>

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, unref, watch } from 'vue'
-import { useQuery, useQueries } from '@tanstack/vue-query'
+import { useQuery } from '@tanstack/vue-query'
 import { Users, Car, Wrench, Wallet } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -13,12 +13,12 @@ import RevisionsModal from '../components/people/RevisionsModal.vue'
 import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
-import { vehicleService } from '../services/vehicle.service'
-import { revisionService } from '../services/revision.service'
-// 🟢 NOVO — service do endpoint agregado (ver dashboard.service.js)
 import { dashboardService } from '../services/dashboard.service'
 
-const { people, isLoading: peopleLoading, errorMessage: peopleError, total: peopleTotal } = usePeople()
+// 🟡 MANTIDO — ainda precisamos da lista de pessoas pra localizar o
+// proprietário quando o usuário clica num veículo (RevisionsModal exige o
+// objeto "person" completo, não só o id).
+const { people, isLoading: peopleLoading, errorMessage: peopleError } = usePeople()
 const toast = useToast()
 
 const formatCurrency = (value) =>
@@ -28,9 +28,8 @@ watch(peopleError, (message) => {
   if (message) toast.error(message)
 })
 
-// 🟢 NOVO — uma única chamada que já traz people_count, vehicles_count,
-// revisions_count e total_invested calculados no backend. Substitui o
-// cálculo que antes era feito no frontend em cima de todas as listas.
+// 🟢 NOVO — os 4 cards do topo vêm de uma única chamada agregada,
+// calculada no backend (COUNT/SUM), sem trafegar listas completas.
 const {
   data: summary,
   isLoading: summaryLoading,
@@ -44,48 +43,16 @@ watch(summaryError, (err) => {
   if (err) toast.error(err.response?.data?.message ?? 'Não foi possível carregar o resumo do painel.')
 })
 
-// 🟡 MANTIDO por enquanto — ainda necessário para o UpcomingRevisionsCard
-// e para localizar o proprietário no openRevisionsModal. Não é mais usado
-// para calcular os stat cards.
-const {
-  data: vehicles,
-  isLoading: vehiclesLoading,
-  error: vehiclesError,
-} = useQuery({
-  queryKey: ['vehicles'],
-  queryFn: () => vehicleService.list(),
-})
-
-// 🟡 MANTIDO por enquanto — dispara uma query de revisões por veículo.
-// TODO: assim que tivermos o UpcomingRevisionsCard.vue, trocar isso pelo
-// endpoint /reports/revisions/upcoming (já existe no backend) e eliminar
-// esse N+1 de vez.
-const revisionQueries = useQueries({
-  queries: computed(() =>
-    (vehicles.value ?? []).map((vehicle) => ({
-      queryKey: ['revisions', vehicle.id],
-      queryFn: () => revisionService.listByVehicle(vehicle.id),
-      enabled: !!vehicles.value,
-    }))
-  ),
-})
-
-const allRevisions = computed(() => revisionQueries.value.flatMap((q) => q.data ?? []))
-
-const revisionsLoading = computed(
-  () => vehiclesLoading.value || revisionQueries.value.some((q) => q.isLoading)
-)
-
-// isLoading agora reflete só o que os cards de resumo dependem (people +
-// summary). Os outros carregamentos (veículos/revisões completos) seguem
-// em paralelo, sem travar a exibição dos números do topo.
+// 🟢 ALTERADO — não busca mais "vehicles" nem faz o N+1 de revisões aqui.
+// O UpcomingRevisionsCard agora busca seus próprios dados (endpoint
+// /reports/revisions/upcoming). O GettingStartedCard usa as contagens do
+// summary em vez de listas completas.
 const isLoading = computed(() => peopleLoading.value || summaryLoading.value)
 
-// 🟢 NOVO — stats vem direto do summary, sem reduce/loop no frontend.
 const stats = computed(() => [
   {
     label: 'Pessoas',
-    value: String(summary.value?.people_count ?? peopleTotal.value ?? 0),
+    value: String(summary.value?.people_count ?? 0),
     icon: Users,
     loading: summaryLoading.value,
   },
@@ -109,29 +76,25 @@ const stats = computed(() => [
   },
 ])
 
-watch(vehiclesError, (err) => {
-  if (err) toast.error(err.response?.data?.message ?? 'Não foi possível carregar os veículos.')
-})
-
 // Estado do modal de revisões (VehicleRevisionsModal exige "person" + aceita
 // highlightVehicleId/highlightRevisionId opcionais)
 const showRevisionsModal = ref(false)
 const selectedPerson = ref(null)
 const highlightVehicleId = ref(null)
-// 🔴 AQUI — id da revisão que deve abrir já em modo edição (vem do clique
-// no card de "Próximas revisões")
 const highlightRevisionId = ref(null)
 
 // Estado do modal de cadastro de veículo — aberto a partir do modal de
 // revisões quando a pessoa ainda não tem nenhum veículo
 const showVehicleFormModal = ref(false)
 
-// 🔴 AQUI — agora aceita um segundo argumento opcional, o id da revisão que
-// veio do clique na previsão do UpcomingRevisionsCard
-const openRevisionsModal = (vehicle, revisionId = null) => {
-  // unref cobre tanto o caso de "people" ser um ref quanto já vir desembrulhado
+// 🟡 ALTERADO — antes recebia o objeto "vehicle" inteiro (vindo da lista
+// completa que buscávamos aqui). Agora o UpcomingRevisionsCard já busca
+// seus próprios dados e emite só os IDs necessários (vehicleId, personId,
+// revisionId). A pessoa é localizada na lista de "people" (que já
+// carregamos de qualquer forma, via usePeople, pra outras partes do app).
+const openRevisionsModal = ({ vehicleId, personId, revisionId = null }) => {
   const personList = unref(people) ?? []
-  const person = personList.find((p) => p.id === vehicle.people_id)
+  const person = personList.find((p) => p.id === personId)
 
   if (!person) {
     toast.error('Não foi possível localizar o proprietário deste veículo.')
@@ -139,7 +102,7 @@ const openRevisionsModal = (vehicle, revisionId = null) => {
   }
 
   selectedPerson.value = person
-  highlightVehicleId.value = vehicle.id
+  highlightVehicleId.value = vehicleId
   highlightRevisionId.value = revisionId
   showRevisionsModal.value = true
 }
@@ -185,13 +148,7 @@ const closeVehicleFormModal = () => {
         :has-vehicles="(summary?.vehicles_count ?? 0) > 0"
         :has-revisions="(summary?.revisions_count ?? 0) > 0"
       />
-      <UpcomingRevisionsCard
-        :vehicles="vehicles ?? []"
-        :people="people"
-        :revisions="allRevisions"
-        :is-loading="revisionsLoading"
-        @edit-vehicle="openRevisionsModal"
-      />
+      <UpcomingRevisionsCard @edit-vehicle="openRevisionsModal" />
     </section>
 
     <RevisionsModal
