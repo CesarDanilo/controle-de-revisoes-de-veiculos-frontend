@@ -46,6 +46,23 @@ const isRevisionsModalOpen = ref(false)
 const personForRevisions = ref(null)
 
 // --- Filtros (agora buscam no backend, em todas as pessoas) ---
+// 🟢 NOVO — limites de caracteres por campo, usados no `maxlength` do HTML,
+// no truncamento em JS (cobre colar texto acima do limite) e nos
+// contadores exibidos dentro dos inputs de nome/e-mail.
+const NAME_MAX_LENGTH = 100
+const EMAIL_MAX_LENGTH = 100
+const PHONE_MAX_LENGTH = 11
+const DOCUMENT_MAX_LENGTH = 11
+
+// 🟢 NOVO — metadados usados tanto pra montar os chips de filtro ativo
+// quanto pra formatar o valor exibido neles (telefone/CPF com máscara).
+const FILTER_FIELDS = [
+  { key: 'name', label: 'Nome' },
+  { key: 'email', label: 'E-mail' },
+  { key: 'phone', label: 'Telefone', format: maskPhone },
+  { key: 'document', label: 'CPF', format: maskDocument },
+]
+
 // Ref local só pra ligação com os inputs (atualiza a UI na hora).
 // O envio real pro backend é debounced, pra não disparar uma request a cada tecla.
 const filterInputs = ref({
@@ -65,9 +82,38 @@ const scheduleFilterUpdate = () => {
   }, DEBOUNCE_MS)
 }
 
+// 🟢 NOVO — usado nos campos de texto livre (nome/e-mail). Trunca no limite
+// (cobre o caso de colar um texto maior que o permitido, que o `maxlength`
+// do HTML já bloqueia na digitação mas não sempre no paste) e agenda o
+// envio debounced normalmente.
+const sanitizeTextFilter = (field, maxLength) => {
+  if (filterInputs.value[field].length > maxLength) {
+    filterInputs.value[field] = filterInputs.value[field].slice(0, maxLength)
+  }
+  scheduleFilterUpdate()
+}
+
 const hasActiveFilters = computed(() =>
   Object.values(filterInputs.value).some((value) => value.trim() !== '')
 )
+
+// 🟢 NOVO — chips de filtro ativo, um por campo preenchido, já com o valor
+// formatado (telefone e CPF ganham máscara pra ficar legível no chip).
+const activeFilterChips = computed(() =>
+  FILTER_FIELDS.filter((field) => filterInputs.value[field.key].trim() !== '').map((field) => ({
+    key: field.key,
+    label: field.label,
+    value: field.format ? field.format(filterInputs.value[field.key]) : filterInputs.value[field.key],
+  }))
+)
+
+// 🟢 NOVO — remove só o filtro daquele chip específico, aplicando na hora
+// (sem debounce, já que é uma ação explícita de clique, não digitação).
+const removeFilter = (key) => {
+  clearTimeout(debounceTimer)
+  filterInputs.value[key] = ''
+  applyFilters({ ...filterInputs.value })
+}
 
 const clearFilters = async () => {
   clearTimeout(debounceTimer)
@@ -255,8 +301,8 @@ const goToVehicleRegistrationFromRevisions = () => {
   openVehicleModal(person)
 }
 
-const sanitizeNumericFilter = (field) => {
-  filterInputs.value[field] = filterInputs.value[field].replace(/\D/g, '').slice(0, 11)
+const sanitizeNumericFilter = (field, maxLength) => {
+  filterInputs.value[field] = filterInputs.value[field].replace(/\D/g, '').slice(0, maxLength)
   scheduleFilterUpdate()
 }
 </script>
@@ -293,61 +339,101 @@ const sanitizeNumericFilter = (field) => {
     <template v-else>
       <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <!-- Nome — com contador de caracteres estilo "fantasma" -->
           <div class="relative">
             <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
               v-model="filterInputs.name"
               type="text"
               placeholder="Filtrar por nome"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
-              @input="scheduleFilterUpdate"
+              :maxlength="NAME_MAX_LENGTH"
+              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-14 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+              @input="sanitizeTextFilter('name', NAME_MAX_LENGTH)"
             />
+            <span
+              class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums"
+              :class="filterInputs.name.length >= NAME_MAX_LENGTH ? 'text-amber-500' : 'text-ink-300'"
+            >
+              {{ filterInputs.name.length }}/{{ NAME_MAX_LENGTH }}
+            </span>
           </div>
+
+          <!-- E-mail — com contador de caracteres estilo "fantasma" -->
           <div class="relative">
             <Mail :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
               v-model="filterInputs.email"
               type="text"
               placeholder="Filtrar por e-mail"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
-              @input="scheduleFilterUpdate"
+              :maxlength="EMAIL_MAX_LENGTH"
+              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-14 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+              @input="sanitizeTextFilter('email', EMAIL_MAX_LENGTH)"
             />
+            <span
+              class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums"
+              :class="filterInputs.email.length >= EMAIL_MAX_LENGTH ? 'text-amber-500' : 'text-ink-300'"
+            >
+              {{ filterInputs.email.length }}/{{ EMAIL_MAX_LENGTH }}
+            </span>
           </div>
+
+          <!-- Telefone -->
           <div class="relative">
             <Phone :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
               v-model="filterInputs.phone"
               type="text"
               placeholder="Filtrar por telefone"
+              :maxlength="PHONE_MAX_LENGTH"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
               @keydown="blockNonNumericKey"
-              @input="sanitizeNumericFilter('phone')"
+              @input="sanitizeNumericFilter('phone', PHONE_MAX_LENGTH)"
             />
           </div>
+
+          <!-- CPF -->
           <div class="relative">
             <IdCard :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
             <input
               v-model="filterInputs.document"
               type="text"
               placeholder="Filtrar por CPF"
+              :maxlength="DOCUMENT_MAX_LENGTH"
               class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
               @keydown="blockNonNumericKey"
-              @input="sanitizeNumericFilter('document')"
+              @input="sanitizeNumericFilter('document', DOCUMENT_MAX_LENGTH)"
             />
           </div>
         </div>
 
-        <div v-if="hasActiveFilters" class="mt-3 flex items-center justify-between">
-          <span class="text-xs text-ink-500">
-            {{ total }} pessoa(s) encontrada(s)
+        <!-- 🟢 NOVO — chips de filtro ativo, um removível por campo -->
+        <div v-if="hasActiveFilters" class="mt-3 flex flex-wrap items-center gap-2">
+          <span class="text-xs text-ink-500">{{ total }} encontrada(s):</span>
+
+          <span
+            v-for="chip in activeFilterChips"
+            :key="chip.key"
+            class="inline-flex items-center gap-1.5 rounded-full bg-brand-50 py-1 pl-3 pr-1.5 text-xs font-medium text-brand-700"
+          >
+            <span class="text-brand-500">{{ chip.label }}:</span>
+            {{ chip.value }}
+            <button
+              type="button"
+              class="flex h-4 w-4 items-center justify-center rounded-full text-brand-500 transition-colors hover:bg-brand-200 hover:text-brand-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+              :aria-label="`Remover filtro de ${chip.label}`"
+              @click="removeFilter(chip.key)"
+            >
+              <X :size="11" />
+            </button>
           </span>
+
           <button
             type="button"
-            class="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-600"
+            class="ml-auto flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-600"
             @click="clearFilters"
           >
             <X :size="14" />
-            Limpar filtros
+            Limpar tudo
           </button>
         </div>
       </div>
