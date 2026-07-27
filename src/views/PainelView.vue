@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed } from 'vue'
+import { useQuery, useQueries } from '@tanstack/vue-query'
 import { Users, Car, Wrench, Wallet } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -14,12 +15,41 @@ import { revisionService } from '../services/revision.service'
 const { people, fetchPeople } = usePeople()
 const toast = useToast()
 
-const vehicles = ref([])
-const allRevisions = ref([])
-const isLoading = ref(true)
-
 const formatCurrency = (value) =>
   Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+
+// people continua vindo do seu composable original (fetchPeople chamado abaixo).
+// Se quiser cache nele também, dá pra migrar depois - não é obrigatório agora.
+fetchPeople().catch((error) => {
+  toast.error(error.response?.data?.message ?? 'Não foi possível carregar as pessoas.')
+})
+
+// Vehicles: agora com cache do Vue Query
+const {
+  data: vehicles,
+  isLoading: vehiclesLoading,
+  error: vehiclesError,
+} = useQuery({
+  queryKey: ['vehicles'],
+  queryFn: () => vehicleService.list(),
+})
+
+// Revisions: uma query por veículo, só roda depois que "vehicles" chegar
+const revisionQueries = useQueries({
+  queries: computed(() =>
+    (vehicles.value ?? []).map((vehicle) => ({
+      queryKey: ['revisions', vehicle.id],
+      queryFn: () => revisionService.listByVehicle(vehicle.id),
+      enabled: !!vehicles.value,
+    }))
+  ),
+})
+
+const allRevisions = computed(() => revisionQueries.value.flatMap((q) => q.data ?? []))
+
+const isLoading = computed(
+  () => vehiclesLoading.value || revisionQueries.value.some((q) => q.isLoading)
+)
 
 const totalInvested = computed(() =>
   allRevisions.value.reduce((sum, revision) => sum + Number(revision.cost || 0), 0)
@@ -27,31 +57,15 @@ const totalInvested = computed(() =>
 
 const stats = computed(() => [
   { label: 'Pessoas', value: String(people.value.length), icon: Users },
-  { label: 'Veículos', value: String(vehicles.value.length), icon: Car },
+  { label: 'Veículos', value: String((vehicles.value ?? []).length), icon: Car },
   { label: 'Revisões', value: String(allRevisions.value.length), icon: Wrench },
   { label: 'Investido', value: formatCurrency(totalInvested.value), icon: Wallet },
 ])
 
-const loadDashboard = async () => {
-  isLoading.value = true
-  try {
-    await fetchPeople()
-    vehicles.value = await vehicleService.list()
-
-    const results = await Promise.all(
-      vehicles.value.map((vehicle) => revisionService.listByVehicle(vehicle.id))
-    )
-    allRevisions.value = results.flat()
-  } catch (error) {
-    const message =
-      error.response?.data?.message ?? 'Não foi possível carregar os dados do painel.'
-    toast.error(message)
-  } finally {
-    isLoading.value = false
-  }
+// Mostra erro de vehicles via toast, igual ao try/catch antigo
+if (vehiclesError.value) {
+  toast.error(vehiclesError.value.response?.data?.message ?? 'Não foi possível carregar os veículos.')
 }
-
-onMounted(loadDashboard)
 </script>
 
 <template>
@@ -80,11 +94,11 @@ onMounted(loadDashboard)
     <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <GettingStartedCard
         :has-people="people.length > 0"
-        :has-vehicles="vehicles.length > 0"
+        :has-vehicles="(vehicles ?? []).length > 0"
         :has-revisions="allRevisions.length > 0"
       />
       <UpcomingRevisionsCard
-        :vehicles="vehicles"
+        :vehicles="vehicles ?? []"
         :people="people"
         :revisions="allRevisions"
         :is-loading="isLoading"
