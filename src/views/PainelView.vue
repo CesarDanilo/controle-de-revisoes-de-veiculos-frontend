@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useQuery, useQueries } from '@tanstack/vue-query'
 import { Users, Car, Wrench, Wallet } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
@@ -18,13 +18,18 @@ const toast = useToast()
 const formatCurrency = (value) =>
   Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-// people continua vindo do seu composable original (fetchPeople chamado abaixo).
-// Se quiser cache nele também, dá pra migrar depois - não é obrigatório agora.
-fetchPeople().catch((error) => {
-  toast.error(error.response?.data?.message ?? 'Não foi possível carregar as pessoas.')
-})
+// people continua vindo do seu composable original. Como ele não expõe um
+// estado de loading próprio, controlamos um ref local só pra isso.
+const peopleLoading = ref(true)
+fetchPeople()
+  .catch((error) => {
+    toast.error(error.response?.data?.message ?? 'Não foi possível carregar as pessoas.')
+  })
+  .finally(() => {
+    peopleLoading.value = false
+  })
 
-// Vehicles: agora com cache do Vue Query
+// Vehicles: cache do Vue Query
 const {
   data: vehicles,
   isLoading: vehiclesLoading,
@@ -47,7 +52,9 @@ const revisionQueries = useQueries({
 
 const allRevisions = computed(() => revisionQueries.value.flatMap((q) => q.data ?? []))
 
-const isLoading = computed(
+// Loading das revisões: true enquanto vehicles ainda não chegou OU
+// enquanto qualquer query de revisão individual ainda está carregando.
+const revisionsLoading = computed(
   () => vehiclesLoading.value || revisionQueries.value.some((q) => q.isLoading)
 )
 
@@ -55,14 +62,39 @@ const totalInvested = computed(() =>
   allRevisions.value.reduce((sum, revision) => sum + Number(revision.cost || 0), 0)
 )
 
+// Loading geral, usado só pros cards de baixo (GettingStarted / UpcomingRevisions)
+const isLoading = computed(
+  () => peopleLoading.value || vehiclesLoading.value || revisionsLoading.value
+)
+
 const stats = computed(() => [
-  { label: 'Pessoas', value: String(people.value.length), icon: Users },
-  { label: 'Veículos', value: String((vehicles.value ?? []).length), icon: Car },
-  { label: 'Revisões', value: String(allRevisions.value.length), icon: Wrench },
-  { label: 'Investido', value: formatCurrency(totalInvested.value), icon: Wallet },
+  {
+    label: 'Pessoas',
+    value: String(people.value.length),
+    icon: Users,
+    loading: peopleLoading.value,
+  },
+  {
+    label: 'Veículos',
+    value: String((vehicles.value ?? []).length),
+    icon: Car,
+    loading: vehiclesLoading.value,
+  },
+  {
+    label: 'Revisões',
+    value: String(allRevisions.value.length),
+    icon: Wrench,
+    loading: revisionsLoading.value,
+  },
+  {
+    label: 'Investido',
+    value: formatCurrency(totalInvested.value),
+    icon: Wallet,
+    // "Investido" depende das revisões, então usa o mesmo loading delas
+    loading: revisionsLoading.value,
+  },
 ])
 
-// Mostra erro de vehicles via toast, igual ao try/catch antigo
 if (vehiclesError.value) {
   toast.error(vehiclesError.value.response?.data?.message ?? 'Não foi possível carregar os veículos.')
 }
@@ -79,15 +111,7 @@ if (vehiclesError.value) {
       </router-link>
     </template>
 
-    <section v-if="isLoading" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <div
-        v-for="n in 4"
-        :key="n"
-        class="h-24 animate-pulse rounded-2xl border border-ink-100 bg-ink-50"
-      />
-    </section>
-
-    <section v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       <StatCard v-for="stat in stats" :key="stat.label" v-bind="stat" />
     </section>
 
