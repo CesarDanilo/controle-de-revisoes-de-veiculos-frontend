@@ -9,6 +9,7 @@ import { maskPhone, maskCPF, maskCNPJ } from '../../utils/masks'
 import { useToast } from '../../composables/useToast'
 import { useEmailValidation } from '../../composables/useEmailValidation'
 import { useCpfValidation } from '../../composables/useCpfValidation'
+import { useCnpjValidation } from '../../composables/useCnpjValidation'
 
 const props = defineProps({
   person: { type: Object, default: null },
@@ -24,6 +25,7 @@ const NAME_MAX_LENGTH = 100
 const EMAIL_MAX_LENGTH = 100
 const EMAIL_DEBOUNCE_MS = 700
 const CPF_DEBOUNCE_MS = 700
+const CNPJ_DEBOUNCE_MS = 700
 
 const personType = ref(
   props.person?.document && props.person.document.replace(/\D/g, '').length === 14
@@ -104,6 +106,7 @@ function selectPersonType(type) {
   form.document = documentByType[type] ?? ''
   fieldErrors.value.document = undefined
   resetCpfValidation()
+  resetCnpjValidation()
 
   if (type === 'PJ') {
     form.birth_date = ''
@@ -282,18 +285,89 @@ watch(
 )
 
 function handleDocumentBlur() {
-  if (personType.value !== 'PF') return
-  if (cpfDebounceTimer) {
-    clearTimeout(cpfDebounceTimer)
-    cpfDebounceTimer = null
+  if (personType.value === 'PF') {
+    if (cpfDebounceTimer) {
+      clearTimeout(cpfDebounceTimer)
+      cpfDebounceTimer = null
+    }
+    runCpfValidation(form.document)
+  } else {
+    if (cnpjDebounceTimer) {
+      clearTimeout(cnpjDebounceTimer)
+      cnpjDebounceTimer = null
+    }
+    runCnpjValidation(form.document)
   }
-  runCpfValidation(form.document)
 }
+// ------------------------------------------------
+
+// ---- Validação de CNPJ via BrasilAPI ----
+const {
+  status: cnpjStatus,
+  message: cnpjValidationMessage,
+  checkCnpj,
+  reset: resetCnpjValidation,
+} = useCnpjValidation()
+
+const cnpjCheckSkippable = computed(() => {
+  // só se aplica a Pessoa Jurídica; PF (CPF) não passa por essa validação
+  if (personType.value !== 'PJ') return true
+  return isEditing && form.document === originalSnapshot?.document
+})
+
+// Mesma regra do CPF: só bloqueia o submit se a API confirmou que o CNPJ
+// NÃO existe. Se a API falhar (status 'error'), não bloqueia.
+const isCnpjVerified = computed(() => {
+  if (cnpjCheckSkippable.value) return true
+  return cnpjStatus.value !== 'invalid'
+})
+
+const cnpjIconState = computed(() => {
+  if (personType.value !== 'PJ') return null
+  if (cnpjCheckSkippable.value) return 'valid'
+  if (cnpjStatus.value === 'valid') return 'valid'
+  if (cnpjStatus.value === 'invalid' || cnpjStatus.value === 'error') return 'invalid'
+  return null
+})
+
+let cnpjDebounceTimer = null
+
+function runCnpjValidation(rawDocument) {
+  if (personType.value !== 'PJ') return
+
+  if (cnpjCheckSkippable.value) {
+    resetCnpjValidation()
+    return
+  }
+
+  const digits = rawDocument.replace(/\D/g, '')
+  if (digits.length !== 14) {
+    resetCnpjValidation()
+    return
+  }
+
+  checkCnpj(digits)
+}
+
+watch(
+  () => form.document,
+  (newDocument) => {
+    if (personType.value !== 'PJ') return
+
+    if (cnpjStatus.value !== 'idle') {
+      resetCnpjValidation()
+    }
+
+    if (cnpjDebounceTimer) clearTimeout(cnpjDebounceTimer)
+    cnpjDebounceTimer = setTimeout(() => runCnpjValidation(newDocument), CNPJ_DEBOUNCE_MS)
+  }
+)
 // ------------------------------------------------
 
 onBeforeUnmount(() => {
   if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
   if (cpfDebounceTimer) clearTimeout(cpfDebounceTimer)
+  if (cnpjDebounceTimer) clearTimeout(cnpjDebounceTimer)
 })
 
 const handleSubmit = async () => {
@@ -334,6 +408,14 @@ const handleSubmit = async () => {
     return
   }
 
+  if (!isCnpjVerified.value) {
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      document: [cnpjValidationMessage.value || 'CNPJ não encontrado.'],
+    }
+    return
+  }
+
   fieldErrors.value = {}
 
   if (isEditing && !hasChanges()) {
@@ -356,14 +438,16 @@ const handleSubmit = async () => {
 }
 
 // botão só libera se: não está enviando, email não está "checking",
-// email verificado, CPF não está "checking", e CPF verificado
+// email verificado, CPF/CNPJ não está "checking", e CPF/CNPJ verificado
 const isSubmitDisabled = computed(() => {
   return (
     isSubmitting.value ||
     emailStatus.value === 'checking' ||
     !isEmailVerified.value ||
     cpfStatus.value === 'checking' ||
-    !isCpfVerified.value
+    !isCpfVerified.value ||
+    cnpjStatus.value === 'checking' ||
+    !isCnpjVerified.value
   )
 })
 
@@ -601,19 +685,32 @@ const emailCharCount = computed(() => form.email.length)
             :placeholder="documentPlaceholder"
             inputmode="numeric"
             :maxlength="personType === 'PJ' ? 18 : 14"
-            :class="personType === 'PF' ? 'pr-9' : ''"
+            class="pr-9"
             @keydown="blockDocumentOverflow"
             @blur="handleDocumentBlur"
           />
-          <span v-if="personType === 'PF'" class="pointer-events-none absolute right-3 top-[38px]">
-            <Loader2 v-if="cpfStatus === 'checking'" :size="18" class="animate-spin text-ink-400" />
-            <CheckCircle2 v-else-if="cpfIconState === 'valid'" :size="18" class="text-green-600" />
-            <XCircle v-else-if="cpfIconState === 'invalid'" :size="18" class="text-red-600" />
+          <span class="pointer-events-none absolute right-3 top-[38px]">
+            <Loader2
+              v-if="(personType === 'PF' && cpfStatus === 'checking') || (personType === 'PJ' && cnpjStatus === 'checking')"
+              :size="18"
+              class="animate-spin text-ink-400"
+            />
+            <CheckCircle2
+              v-else-if="(personType === 'PF' && cpfIconState === 'valid') || (personType === 'PJ' && cnpjIconState === 'valid')"
+              :size="18"
+              class="text-green-600"
+            />
+            <XCircle
+              v-else-if="(personType === 'PF' && cpfIconState === 'invalid') || (personType === 'PJ' && cnpjIconState === 'invalid')"
+              :size="18"
+              class="text-red-600"
+            />
           </span>
         </div>
 
         <div class="flex items-center justify-between">
           <span v-if="fieldErrors.document" class="text-xs text-red-600">{{ fieldErrors.document[0] }}</span>
+
           <span v-else-if="personType === 'PF' && cpfStatus === 'checking'" class="text-xs text-ink-400">
             Verificando CPF...
           </span>
@@ -626,6 +723,20 @@ const emailCharCount = computed(() => form.email.length)
           <span v-else-if="personType === 'PF' && cpfStatus === 'valid'" class="text-xs text-green-600">
             CPF válido
           </span>
+
+          <span v-else-if="personType === 'PJ' && cnpjStatus === 'checking'" class="text-xs text-ink-400">
+            Verificando CNPJ...
+          </span>
+          <span v-else-if="personType === 'PJ' && cnpjStatus === 'invalid'" class="text-xs text-red-600">
+            {{ cnpjValidationMessage }}
+          </span>
+          <span v-else-if="personType === 'PJ' && cnpjStatus === 'error'" class="text-xs text-amber-600">
+            {{ cnpjValidationMessage }}
+          </span>
+          <span v-else-if="personType === 'PJ' && cnpjStatus === 'valid'" class="text-xs text-green-600">
+            CNPJ válido
+          </span>
+
           <span v-else></span>
         </div>
       </div>
@@ -636,7 +747,7 @@ const emailCharCount = computed(() => form.email.length)
         </BaseButton>
         <BaseButton type="submit" :disabled="isSubmitDisabled">
           <span v-if="isSubmitting">Salvando...</span>
-          <span v-else-if="emailStatus === 'checking' || cpfStatus === 'checking'">Verificando dados...</span>
+          <span v-else-if="emailStatus === 'checking' || cpfStatus === 'checking' || cnpjStatus === 'checking'">Verificando dados...</span>
           <span v-else>{{ isEditing ? 'Salvar alterações' : 'Cadastrar' }}</span>
         </BaseButton>
       </div>
