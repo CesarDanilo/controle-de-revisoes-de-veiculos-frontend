@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, ref, unref, watch } from 'vue'
 import { useQuery, useQueries } from '@tanstack/vue-query'
 import { Users, Car, Wrench, Wallet } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
@@ -7,14 +7,15 @@ import BaseButton from '../components/ui/BaseButton.vue'
 import StatCard from '../components/dashboard/StatCard.vue'
 import GettingStartedCard from '../components/dashboard/GettingStartedCard.vue'
 import UpcomingRevisionsCard from '../components/dashboard/UpcomingRevisionsCard.vue'
+// TODO: troque pelo nome/caminho real do arquivo do modal de revisões (documento 8)
+import RevisionsModal from '../components/people/RevisionsModal.vue'
+// usado como fallback quando a pessoa clica em "Cadastrar veículo" dentro do modal de revisões
+import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
 import { vehicleService } from '../services/vehicle.service'
 import { revisionService } from '../services/revision.service'
 
-// people agora vem do usePeople novo (Vue Query) - já expõe isLoading e
-// errorMessage próprios, então não precisamos mais de um ref manual nem
-// de chamar fetchPeople().catch(), que não existe mais nesse formato.
 const { people, isLoading: peopleLoading, errorMessage: peopleError, total: peopleTotal } = usePeople()
 const toast = useToast()
 
@@ -25,7 +26,6 @@ watch(peopleError, (message) => {
   if (message) toast.error(message)
 })
 
-// Vehicles: cache do Vue Query
 const {
   data: vehicles,
   isLoading: vehiclesLoading,
@@ -35,7 +35,6 @@ const {
   queryFn: () => vehicleService.list(),
 })
 
-// Revisions: uma query por veículo, só roda depois que "vehicles" chegar
 const revisionQueries = useQueries({
   queries: computed(() =>
     (vehicles.value ?? []).map((vehicle) => ({
@@ -48,8 +47,6 @@ const revisionQueries = useQueries({
 
 const allRevisions = computed(() => revisionQueries.value.flatMap((q) => q.data ?? []))
 
-// Loading das revisões: true enquanto vehicles ainda não chegou OU
-// enquanto qualquer query de revisão individual ainda está carregando.
 const revisionsLoading = computed(
   () => vehiclesLoading.value || revisionQueries.value.some((q) => q.isLoading)
 )
@@ -58,7 +55,6 @@ const totalInvested = computed(() =>
   allRevisions.value.reduce((sum, revision) => sum + Number(revision.cost || 0), 0)
 )
 
-// Loading geral, usado só pros cards de baixo (GettingStarted / UpcomingRevisions)
 const isLoading = computed(
   () => peopleLoading.value || vehiclesLoading.value || revisionsLoading.value
 )
@@ -66,8 +62,6 @@ const isLoading = computed(
 const stats = computed(() => [
   {
     label: 'Pessoas',
-    // usa o total real (vindo da paginação), não people.value.length,
-    // que agora é só os 10 itens da página atual.
     value: String(peopleTotal.value),
     icon: Users,
     loading: peopleLoading.value,
@@ -88,7 +82,6 @@ const stats = computed(() => [
     label: 'Investido',
     value: formatCurrency(totalInvested.value),
     icon: Wallet,
-    // "Investido" depende das revisões, então usa o mesmo loading delas
     loading: revisionsLoading.value,
   },
 ])
@@ -96,6 +89,56 @@ const stats = computed(() => [
 watch(vehiclesError, (err) => {
   if (err) toast.error(err.response?.data?.message ?? 'Não foi possível carregar os veículos.')
 })
+
+// Estado do modal de revisões (VehicleRevisionsModal exige "person" + aceita
+// highlightVehicleId/highlightRevisionId opcionais)
+const showRevisionsModal = ref(false)
+const selectedPerson = ref(null)
+const highlightVehicleId = ref(null)
+// 🔴 AQUI — id da revisão que deve abrir já em modo edição (vem do clique
+// no card de "Próximas revisões")
+const highlightRevisionId = ref(null)
+
+// Estado do modal de cadastro de veículo — aberto a partir do modal de
+// revisões quando a pessoa ainda não tem nenhum veículo
+const showVehicleFormModal = ref(false)
+
+// 🔴 AQUI — agora aceita um segundo argumento opcional, o id da revisão que
+// veio do clique na previsão do UpcomingRevisionsCard
+const openRevisionsModal = (vehicle, revisionId = null) => {
+  // unref cobre tanto o caso de "people" ser um ref quanto já vir desembrulhado
+  const personList = unref(people) ?? []
+  const person = personList.find((p) => p.id === vehicle.people_id)
+
+  if (!person) {
+    toast.error('Não foi possível localizar o proprietário deste veículo.')
+    return
+  }
+
+  selectedPerson.value = person
+  highlightVehicleId.value = vehicle.id
+  highlightRevisionId.value = revisionId
+  showRevisionsModal.value = true
+}
+
+const closeRevisionsModal = () => {
+  showRevisionsModal.value = false
+  selectedPerson.value = null
+  highlightVehicleId.value = null
+  highlightRevisionId.value = null
+}
+
+// Disparado pelo próprio VehicleRevisionsModal (@register-vehicle) quando a
+// pessoa não tem veículo nenhum ainda e clica em "Cadastrar veículo"
+const openVehicleFormFromRevisions = () => {
+  showRevisionsModal.value = false
+  showVehicleFormModal.value = true
+}
+
+const closeVehicleFormModal = () => {
+  showVehicleFormModal.value = false
+  selectedPerson.value = null
+}
 </script>
 
 <template>
@@ -124,7 +167,23 @@ watch(vehiclesError, (err) => {
         :people="people"
         :revisions="allRevisions"
         :is-loading="isLoading"
+        @edit-vehicle="openRevisionsModal"
       />
     </section>
+
+    <RevisionsModal
+      v-if="showRevisionsModal && selectedPerson"
+      :person="selectedPerson"
+      :highlight-vehicle-id="highlightVehicleId"
+      :highlight-revision-id="highlightRevisionId"
+      @close="closeRevisionsModal"
+      @register-vehicle="openVehicleFormFromRevisions"
+    />
+
+    <VehicleFormModal
+      v-if="showVehicleFormModal && selectedPerson"
+      :person="selectedPerson"
+      @close="closeVehicleFormModal"
+    />
   </AppShell>
 </template>
