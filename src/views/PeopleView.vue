@@ -82,10 +82,6 @@ const scheduleFilterUpdate = () => {
   }, DEBOUNCE_MS)
 }
 
-// 🟢 NOVO — usado nos campos de texto livre (nome/e-mail). Trunca no limite
-// (cobre o caso de colar um texto maior que o permitido, que o `maxlength`
-// do HTML já bloqueia na digitação mas não sempre no paste) e agenda o
-// envio debounced normalmente.
 const sanitizeTextFilter = (field, maxLength) => {
   if (filterInputs.value[field].length > maxLength) {
     filterInputs.value[field] = filterInputs.value[field].slice(0, maxLength)
