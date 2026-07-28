@@ -76,6 +76,10 @@ const formatarData = (data) => {
 const filtroBusca = ref('')
 const filtroTipo = ref('')
 
+// 🟢 limite de caracteres da busca, enforced no state (maxlength no input
+// trava a digitação; o slice no onBuscaInput cobre paste acima do limite)
+const BUSCA_MAX_LENGTH = 100
+
 let debounceTimer = null
 const DEBOUNCE_MS = 400
 
@@ -87,6 +91,9 @@ const carregarComFiltros = (page = 1) => {
 }
 
 const onBuscaInput = () => {
+  if (filtroBusca.value.length > BUSCA_MAX_LENGTH) {
+    filtroBusca.value = filtroBusca.value.slice(0, BUSCA_MAX_LENGTH)
+  }
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => carregarComFiltros(1), DEBOUNCE_MS)
 }
@@ -152,9 +159,6 @@ const hasPagination = computed(() => lastPage.value > 1)
 
 const rangeLabel = computed(() => {
   if (!total.value) return ''
-  // 🔴 FIX — antes usava uma constante local (PER_PAGE = 10) dessincronizada
-  // do valor real vindo da API (per_page = 15). Agora usa perPage.value,
-  // que o composable já retorna a cada fetch.
   const from = (currentPage.value - 1) * perPage.value + 1
   const to = Math.min(currentPage.value * perPage.value, total.value)
   return `Mostrando ${from}–${to} de ${total.value}`
@@ -207,15 +211,23 @@ onMounted(() => carregarComFiltros(1))
     <!-- Barra de filtros -->
     <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <!-- Busca — com contador de caracteres estilo "fantasma" -->
         <div class="relative sm:col-span-2">
           <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
           <input
             v-model="filtroBusca"
             type="text"
             placeholder="Buscar por nome, descrição ou placa"
-            class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+            :maxlength="BUSCA_MAX_LENGTH"
+            class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-14 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
             @input="onBuscaInput"
           />
+          <span
+            class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums"
+            :class="filtroBusca.length >= BUSCA_MAX_LENGTH ? 'text-amber-500' : 'text-ink-300'"
+          >
+            {{ filtroBusca.length }}/{{ BUSCA_MAX_LENGTH }}
+          </span>
         </div>
 
         <select
