@@ -14,6 +14,7 @@ const {
   currentPage,
   lastPage,
   total,
+  perPage,
   fetchLixeira,
   restaurarItem,
   excluirPermanentemente,
@@ -77,9 +78,6 @@ const filtroTipo = ref('')
 
 let debounceTimer = null
 const DEBOUNCE_MS = 400
-
-// 🟢 Ajuste: usado pelo rangeLabel abaixo — mesmo per_page que o composable usa
-const PER_PAGE = 10
 
 const carregarComFiltros = (page = 1) => {
   fetchLixeira(page, {
@@ -154,8 +152,11 @@ const hasPagination = computed(() => lastPage.value > 1)
 
 const rangeLabel = computed(() => {
   if (!total.value) return ''
-  const from = (currentPage.value - 1) * PER_PAGE + 1
-  const to = Math.min(currentPage.value * PER_PAGE, total.value)
+  // 🔴 FIX — antes usava uma constante local (PER_PAGE = 10) dessincronizada
+  // do valor real vindo da API (per_page = 15). Agora usa perPage.value,
+  // que o composable já retorna a cada fetch.
+  const from = (currentPage.value - 1) * perPage.value + 1
+  const to = Math.min(currentPage.value * perPage.value, total.value)
   return `Mostrando ${from}–${to} de ${total.value}`
 })
 
