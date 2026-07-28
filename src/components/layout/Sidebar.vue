@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { LayoutGrid, Users, BarChart3, LogOut, Menu, X } from '@lucide/vue'
+import { LayoutGrid, Users, BarChart3, Trash2, LogOut, Menu, X } from '@lucide/vue'
 import BrandMark from '../ui/BrandMark.vue'
 import { useAuth } from '../../composables/useAuth.js'
 // 🟢 NOVO — estado do collapse agora vem de um composable com escopo de
@@ -20,6 +20,7 @@ const links = [
   { label: 'Painel', to: '/painel', icon: LayoutGrid },
   { label: 'Proprietários', to: '/people', icon: Users },
   { label: 'Relatórios', to: '/relatorios', icon: BarChart3 },
+  { label: 'Lixeira', to: '/lixeira', icon: Trash2 },
 ]
 
 const handleLogout = () => {
@@ -48,7 +49,7 @@ const closeSidebar = () => {
     class="fixed inset-0 z-40 bg-black/40 md:hidden"
     @click="closeSidebar"
   />
-  
+
   <aside
     class="fixed inset-y-0 left-0 z-50 flex shrink-0 -translate-x-full flex-col border-r border-surface-border bg-white transition-all duration-300 ease-in-out md:sticky md:top-0 md:h-screen md:translate-x-0 md:overflow-y-auto"
     :class="[isOpen ? 'translate-x-0' : '', isCollapsed ? 'w-64 md:w-20' : 'w-64']"
