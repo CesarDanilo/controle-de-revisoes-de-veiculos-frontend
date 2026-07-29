@@ -19,8 +19,8 @@ const isOpen = ref(false)
 const links = [
   { label: 'Painel', to: '/painel', icon: LayoutGrid },
   { label: 'Proprietários', to: '/people', icon: Users },
-  { label: 'Relatórios', to: '/relatorios', icon: BarChart3 },
   { label: 'Kanban', to: '/kanban', icon: Kanban },
+  { label: 'Relatórios', to: '/relatorios', icon: BarChart3 },
   { label: 'Lixeira', to: '/lixeira', icon: Trash2 },
 ]
 
