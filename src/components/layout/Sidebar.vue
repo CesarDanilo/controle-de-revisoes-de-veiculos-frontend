@@ -1,7 +1,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { LayoutGrid, Users, BarChart3, Trash2, LogOut, Menu, X } from '@lucide/vue'
+import { LayoutGrid, Users, BarChart3, Trash2, LogOut, Menu, X, Kanban } from '@lucide/vue'
 import BrandMark from '../ui/BrandMark.vue'
 import { useAuth } from '../../composables/useAuth.js'
 // 🟢 NOVO — estado do collapse agora vem de um composable com escopo de
@@ -20,6 +20,7 @@ const links = [
   { label: 'Painel', to: '/painel', icon: LayoutGrid },
   { label: 'Proprietários', to: '/people', icon: Users },
   { label: 'Relatórios', to: '/relatorios', icon: BarChart3 },
+  { label: 'Kanban', to: '/kanban', icon: Kanban },
   { label: 'Lixeira', to: '/lixeira', icon: Trash2 },
 ]
 

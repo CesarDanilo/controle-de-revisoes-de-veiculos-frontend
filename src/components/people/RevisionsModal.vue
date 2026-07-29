@@ -50,6 +50,40 @@ const DESCRIPTION_MAX_LENGTH = 150
 // 🔴 AQUI — quantos anos no futuro a próxima revisão pode ser agendada
 const MAX_YEARS_AHEAD = 5
 
+// 🔴 AQUI — espelha os enums StatusRevisao e StatusPagamento do backend.
+// Se você mudar os enums no PHP, atualize aqui também (ou exponha via
+// StatusRevisao::options() / StatusPagamento::options() num endpoint e troque
+// isso por uma chamada de API, se preferir manter uma fonte única de verdade).
+const STATUS_OPTIONS = [
+  { value: 'aberto', label: 'Aberto' },
+  { value: 'em_andamento', label: 'Em andamento' },
+  { value: 'aguardando_pagamento', label: 'Aguardando pagamento' },
+  { value: 'concluido', label: 'Concluído' },
+  { value: 'cancelado', label: 'Cancelado' },
+]
+
+const STATUS_PAGAMENTO_OPTIONS = [
+  { value: 'pendente', label: 'Pendente' },
+  { value: 'pago', label: 'Pago' },
+]
+
+const STATUS_BADGE_CLASSES = {
+  aberto: 'bg-blue-50 text-blue-700 border-blue-200',
+  em_andamento: 'bg-amber-50 text-amber-700 border-amber-200',
+  aguardando_pagamento: 'bg-orange-50 text-orange-700 border-orange-200',
+  concluido: 'bg-green-50 text-green-700 border-green-200',
+  cancelado: 'bg-ink-100 text-ink-500 border-ink-200',
+}
+
+const STATUS_PAGAMENTO_BADGE_CLASSES = {
+  pendente: 'bg-amber-50 text-amber-700 border-amber-200',
+  pago: 'bg-green-50 text-green-700 border-green-200',
+}
+
+const statusLabel = (value) => STATUS_OPTIONS.find((o) => o.value === value)?.label || '—'
+const statusPagamentoLabel = (value) =>
+  STATUS_PAGAMENTO_OPTIONS.find((o) => o.value === value)?.label || '—'
+
 const emptyFieldErrors = () => ({
   description: '',
   revision_date: '',
@@ -60,6 +94,8 @@ const emptyFieldErrors = () => ({
 const fieldErrors = reactive(emptyFieldErrors())
 
 // custo nasce em 0 (não null) — pagamento é sempre informado, mesmo que gratuito
+// status/status_pagamento só são usados/exibidos no modo edição (ver template);
+// na criação a revisão nasce com o default do banco (aberto/pendente).
 const emptyForm = () => ({
   description: '',
   revision_date: new Date().toISOString().slice(0, 10),
@@ -67,20 +103,37 @@ const emptyForm = () => ({
   cost: 0,
   next_revision_date: '',
   next_revision_km: null,
+  status: 'aberto',
+  status_pagamento: 'pendente',
 })
 const formData = reactive(emptyForm())
 
 // snapshot normalizado da revisão original (usado pra detectar o que mudou na edição)
 const originalSnapshot = ref(null)
 
+// 🔴 AQUI — snapshot separado pra status/status_pagamento, porque esses dois
+// campos são salvos através de um endpoint diferente (updateStatusFields), então
+// precisam da própria detecção de "mudou ou não"
+const originalStatusSnapshot = ref(null)
+
 // 🔴 AQUI — no modo criação sempre libera o botão; no modo edição só libera
-// quando algum campo realmente mudou em relação ao snapshot original
+// quando algum campo (incluindo status/status_pagamento) realmente mudou
+// em relação ao snapshot original
 const hasChanges = computed(() => {
   if (formMode.value !== 'edit') return true
   if (!originalSnapshot.value) return true
 
   const comparable = buildComparablePayload()
-  return Object.keys(comparable).some((key) => comparable[key] !== originalSnapshot.value[key])
+  const regularChanged = Object.keys(comparable).some(
+    (key) => comparable[key] !== originalSnapshot.value[key]
+  )
+
+  const statusChanged =
+    !!originalStatusSnapshot.value &&
+    (formData.status !== originalStatusSnapshot.value.status ||
+      formData.status_pagamento !== originalStatusSnapshot.value.status_pagamento)
+
+  return regularChanged || statusChanged
 })
 
 // --- Delete state ---
@@ -277,6 +330,8 @@ const FIELD_LABELS = {
   next_revision_date: 'Próxima revisão (data)',
   next_revision_km: 'Próxima revisão (KM)',
   vehicle_id: 'Veículo',
+  status: 'Status',
+  status_pagamento: 'Status de pagamento',
 }
 
 function translateValidationMessage(field, message) {
@@ -306,6 +361,9 @@ function translateValidationMessage(field, message) {
   if (/must be greater than/i.test(message)) {
     return `${label}: deve ser maior que o valor de referência.`
   }
+  if (/is invalid|invalid selected|selected .* is invalid/i.test(message)) {
+    return `${label}: valor inválido.`
+  }
 
   return `${label}: ${message}`
 }
@@ -317,6 +375,8 @@ function translateValidationErrors(validationErrors) {
 }
 
 // ---------- comparação de campos alterados (evita update desnecessário) ----------
+// Só os campos "normais" da revisão — status/status_pagamento têm o próprio
+// snapshot (originalStatusSnapshot) e vão pro endpoint updateStatusFields.
 function buildComparablePayload() {
   return {
     description: formData.description.trim(),
@@ -412,6 +472,7 @@ const toggleForm = (vehicleId) => {
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
   originalSnapshot.value = null
+  originalStatusSnapshot.value = null
   Object.assign(formData, emptyForm())
 }
 
@@ -438,9 +499,15 @@ const startEdit = (vehicleId, revision) => {
       revision.next_revision_km !== ''
         ? Number(revision.next_revision_km)
         : null,
+    status: revision.status || 'aberto',
+    status_pagamento: revision.status_pagamento || 'pendente',
   })
 
   originalSnapshot.value = buildComparablePayload()
+  originalStatusSnapshot.value = {
+    status: formData.status,
+    status_pagamento: formData.status_pagamento,
+  }
 }
 
 const closeForm = () => {
@@ -450,6 +517,7 @@ const closeForm = () => {
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
   originalSnapshot.value = null
+  originalStatusSnapshot.value = null
 }
 
 const submitRevision = async (vehicle) => {
@@ -511,7 +579,7 @@ const submitRevision = async (vehicle) => {
 
   if (hasError) return
 
-  // --- modo edição: verifica se algo realmente mudou antes de chamar a API ---
+  // --- modo edição: verifica o que mudou antes de chamar a API ---
   if (formMode.value === 'edit' && editingRevisionId.value) {
     const comparable = buildComparablePayload()
     const changedFields = {}
@@ -522,20 +590,49 @@ const submitRevision = async (vehicle) => {
       }
     }
 
-    if (Object.keys(changedFields).length === 0) {
+    // 🔴 AQUI — status/status_pagamento vão num payload separado, porque são
+    // salvos pelo endpoint dedicado (não pelo update geral)
+    const statusPayload = {}
+    if (formData.status !== originalStatusSnapshot.value?.status) {
+      statusPayload.status = formData.status
+    }
+    if (formData.status_pagamento !== originalStatusSnapshot.value?.status_pagamento) {
+      statusPayload.status_pagamento = formData.status_pagamento
+    }
+
+    const hasRegularChanges = Object.keys(changedFields).length > 0
+    const hasStatusChanges = Object.keys(statusPayload).length > 0
+
+    if (!hasRegularChanges && !hasStatusChanges) {
       toast.info('Nenhuma alteração foi feita.')
       return
     }
 
     isSubmitting.value = true
     try {
-      const payload = { vehicle_id: vehicle.id, ...comparable }
-      const rawUpdated = await revisionService.update(editingRevisionId.value, payload)
-      const updated = rawUpdated?.data ?? rawUpdated
+      let mergedUpdate = {}
+
+      if (hasRegularChanges) {
+        const payload = { vehicle_id: vehicle.id, ...comparable }
+        const rawUpdated = await revisionService.update(editingRevisionId.value, payload)
+        mergedUpdate = { ...mergedUpdate, ...(rawUpdated?.data ?? rawUpdated) }
+      }
+
+      if (hasStatusChanges) {
+        // 🔴 AQUI — usa o método dedicado do serviço (endpoint PATCH
+        // /revisions/{id}/status), diferente do updateStatus() do Kanban,
+        // que só manda a string do status.
+        const rawStatusUpdated = await revisionService.updateStatusFields(
+          editingRevisionId.value,
+          statusPayload
+        )
+        mergedUpdate = { ...mergedUpdate, ...(rawStatusUpdated?.data ?? rawStatusUpdated) }
+      }
+
       const currentList = revisionsByVehicle[vehicle.id] || []
       const idx = currentList.findIndex((r) => r.id === editingRevisionId.value)
       if (idx !== -1) {
-        currentList.splice(idx, 1, { ...currentList[idx], ...updated })
+        currentList.splice(idx, 1, { ...currentList[idx], ...mergedUpdate })
       }
       revisionsByVehicle[vehicle.id] = sortRevisions(currentList)
       toast.success('Revisão atualizada com sucesso!')
@@ -552,7 +649,8 @@ const submitRevision = async (vehicle) => {
     return
   }
 
-  // --- modo criação: comportamento original, envia tudo ---
+  // --- modo criação: comportamento original, envia tudo (status/status_pagamento
+  // nascem com o default do banco: aberto/pendente) ---
   isSubmitting.value = true
   try {
     const payload = {
@@ -824,6 +922,34 @@ onMounted(async () => {
                   {{ fieldErrors.next_revision_km }}
                 </p>
               </div>
+
+              <!-- 🔴 AQUI — status e status de pagamento ficam do lado da próxima
+                   revisão (mesma grid), só no modo edição. Uma revisão nasce
+                   "aberto/pendente" e é atualizada depois, via Kanban (arrastar)
+                   ou aqui manualmente. -->
+              <div v-if="formMode === 'edit'">
+                <label class="mb-1 block text-xs font-medium text-ink-600">Status</label>
+                <select
+                  v-model="formData.status"
+                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
+                >
+                  <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
+
+              <div v-if="formMode === 'edit'">
+                <label class="mb-1 block text-xs font-medium text-ink-600">Status de pagamento</label>
+                <select
+                  v-model="formData.status_pagamento"
+                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
+                >
+                  <option v-for="opt in STATUS_PAGAMENTO_OPTIONS" :key="opt.value" :value="opt.value">
+                    {{ opt.label }}
+                  </option>
+                </select>
+              </div>
             </div>
 
             <!-- Ações do formulário: empilha e ocupa a largura toda no mobile,
@@ -925,6 +1051,22 @@ onMounted(async () => {
                 </div>
               </div>
 
+              <!-- 🔴 AQUI — badges de status e pagamento -->
+              <div class="mb-2 flex flex-wrap items-center gap-1.5">
+                <span
+                  class="rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                  :class="STATUS_BADGE_CLASSES[revision.status] || 'border-ink-200 text-ink-500'"
+                >
+                  {{ statusLabel(revision.status) }}
+                </span>
+                <span
+                  class="rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                  :class="STATUS_PAGAMENTO_BADGE_CLASSES[revision.status_pagamento] || 'border-ink-200 text-ink-500'"
+                >
+                  {{ statusPagamentoLabel(revision.status_pagamento) }}
+                </span>
+              </div>
+
               <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-ink-600">
                 <div>
                   <span class="text-ink-400">Data:</span>
@@ -951,13 +1093,14 @@ onMounted(async () => {
 
           <!-- ===== DESKTOP (>= sm): tabela original ===== -->
           <div class="hidden overflow-x-auto rounded-xl border border-ink-100 sm:block">
-            <table class="w-full min-w-[560px] text-left text-xs">
+            <table class="w-full min-w-[640px] text-left text-xs">
               <thead class="bg-ink-50 text-ink-500">
                 <tr>
                   <th class="px-3 py-2 font-medium">Descrição</th>
                   <th class="px-3 py-2 font-medium">Data</th>
                   <th class="px-3 py-2 font-medium">KM</th>
                   <th class="px-3 py-2 font-medium">Custo</th>
+                  <th class="px-3 py-2 font-medium">Status</th>
                   <th class="px-3 py-2 font-medium">Próxima revisão</th>
                   <th class="px-3 py-2 font-medium text-right">Ações</th>
                 </tr>
@@ -978,6 +1121,22 @@ onMounted(async () => {
                   <td class="px-3 py-2">{{ formatDate(revision.revision_date) }}</td>
                   <td class="px-3 py-2">{{ revision.km ? Number(revision.km).toLocaleString('pt-BR') : '—' }}</td>
                   <td class="px-3 py-2">{{ formatCurrency(revision.cost) }}</td>
+                  <td class="px-3 py-2">
+                    <div class="flex flex-col gap-1">
+                      <span
+                        class="w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                        :class="STATUS_BADGE_CLASSES[revision.status] || 'border-ink-200 text-ink-500'"
+                      >
+                        {{ statusLabel(revision.status) }}
+                      </span>
+                      <span
+                        class="w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                        :class="STATUS_PAGAMENTO_BADGE_CLASSES[revision.status_pagamento] || 'border-ink-200 text-ink-500'"
+                      >
+                        {{ statusPagamentoLabel(revision.status_pagamento) }}
+                      </span>
+                    </div>
+                  </td>
                   <td
                     class="px-3 py-2"
                     :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''"
