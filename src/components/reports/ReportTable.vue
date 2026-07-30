@@ -93,7 +93,7 @@ const handleRowClick = (row) => {
             :tabindex="rowClickable ? 0 : undefined"
             :role="rowClickable ? 'button' : undefined"
             class="transition-colors"
-            :class="rowClickable ? 'cursor-pointer hover:bg-ink-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-inset' : ''"
+            :class="rowClickable ? 'cursor-pointer hover:bg-brand-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-inset' : ''"
             @click="handleRowClick(row)"
             @keydown.enter="handleRowClick(row)"
             @keydown.space.prevent="handleRowClick(row)"
@@ -115,7 +115,7 @@ const handleRowClick = (row) => {
       <div class="flex items-center gap-1">
         <button
           type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-lg text-ink-500 hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          class="flex h-7 w-7 items-center justify-center rounded-lg text-ink-500 hover:bg-brand-50 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           :disabled="pagination.currentPage <= 1 || loading"
           aria-label="Página anterior"
           @click="goToPage(pagination.currentPage - 1)"
@@ -132,7 +132,7 @@ const handleRowClick = (row) => {
             :class="
               page === pagination.currentPage
                 ? 'bg-brand-600 text-white'
-                : 'text-ink-600 hover:bg-ink-50'
+                : 'text-ink-600 hover:bg-brand-50 hover:text-brand-600'
             "
             :disabled="loading"
             :aria-current="page === pagination.currentPage ? 'page' : undefined"
@@ -144,7 +144,7 @@ const handleRowClick = (row) => {
 
         <button
           type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-lg text-ink-500 hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          class="flex h-7 w-7 items-center justify-center rounded-lg text-ink-500 hover:bg-brand-50 hover:text-brand-600 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           :disabled="pagination.currentPage >= pagination.lastPage || loading"
           aria-label="Próxima página"
           @click="goToPage(pagination.currentPage + 1)"
