@@ -52,8 +52,13 @@ const isLoading = computed(() => peopleLoading.value || summaryLoading.value)
 // 🟢 ALTERADO — cada card agora só leva um link interno "Ver relatório"
 // (renderizado pelo próprio StatCard via prop "to"), não o card inteiro
 // clicável. As âncoras "#aba-*" trocam a aba de detalhe ativa em
-// ReportsView.vue antes de rolar (ver TAB_HASH_MAP lá); "#proximas-revisoes"
-// e "#secao-financeiro" são seções fixas, mesmo padrão de sempre.
+// ReportsView.vue antes de rolar (ver TAB_HASH_MAP lá); "#secao-financeiro"
+// é seção fixa, mesmo padrão de sempre.
+//
+// 🔧 CORRIGIDO — "Revisões" antes apontava pra "#proximas-revisoes" (painel
+// de alertas lá em cima), mas esse card mostra a CONTAGEM TOTAL de
+// revisões, então o destino correto é a tabela detalhada de revisões
+// (aba "Revisões", "#aba-revisoes"), igual já acontecia com Veículos/Pessoas.
 const stats = computed(() => [
   {
     label: 'Pessoas',
@@ -74,7 +79,7 @@ const stats = computed(() => [
     value: String(summary.value?.revisions_count ?? 0),
     icon: Wrench,
     loading: summaryLoading.value,
-    to: '/relatorios#proximas-revisoes',
+    to: '/relatorios#aba-revisoes',
   },
   {
     label: 'Investido',

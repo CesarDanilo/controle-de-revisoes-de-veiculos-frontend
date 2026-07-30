@@ -271,6 +271,85 @@ const TAB_HASH_MAP = {
   '#aba-pessoas': 'people',
 }
 
+// Ajuste HEADER_OFFSET pra bater com a altura real do header sticky do seu
+// AppShell (inclua qualquer padding/margem extra que você queira de respiro).
+const HEADER_OFFSET = 96
+
+// 🔧 CORRIGIDO — causa raiz do "Pessoas não centraliza": usávamos
+// el.scrollIntoView({ block: 'start' }), mas o navegador NÃO CONSEGUE
+// rolar além do fim do documento. A aba "Pessoas" tem a tabela mais curta
+// (menos colunas/linhas que Veículos e Revisões), então a página como um
+// todo às vezes não tem altura suficiente abaixo de "#secao-detalhes" pra
+// empurrá-la até o topo do viewport — o scroll para no fim da página,
+// deixando a seção baixa/cortada, mesmo que o alvo esteja "certo".
+//
+// A correção: calculamos a posição manualmente e, se a página não tiver
+// espaço suficiente pra rolar até lá, injetamos um espaçador temporário no
+// fim da página do tamanho exato que falta — garantindo que sempre exista
+// espaço pra centralizar a seção, independente de quão curto seja o
+// conteúdo da aba. O espaçador só é removido depois que o scroll de fato
+// termina de se mover (não num timeout fixo, que cortaria a animação no
+// meio do caminho justamente nas distâncias mais longas, como a de
+// "Pessoas").
+const scrollSpacerHeight = ref(0)
+
+const waitForScrollToSettle = (target, { tolerance = 2, maxWait = 3000 } = {}) => {
+  return new Promise((resolve) => {
+    const startedAt = Date.now()
+    let lastY = window.scrollY
+    let stableFrames = 0
+
+    const check = () => {
+      const currentY = window.scrollY
+      const reachedTarget = Math.abs(currentY - target) <= tolerance
+      const stoppedMoving = Math.abs(currentY - lastY) <= tolerance
+
+      if (reachedTarget || Date.now() - startedAt > maxWait) {
+        resolve()
+        return
+      }
+
+      stableFrames = stoppedMoving ? stableFrames + 1 : 0
+      lastY = currentY
+
+      // parou de se mover por vários frames seguidos (ex: bateu no fim da
+      // página antes de alcançar o alvo) — não faz sentido continuar esperando
+      if (stableFrames > 10) {
+        resolve()
+        return
+      }
+
+      requestAnimationFrame(check)
+    }
+
+    requestAnimationFrame(check)
+  })
+}
+
+const scrollToTarget = async (targetId) => {
+  const el = document.getElementById(targetId)
+  if (!el) return
+
+  const desiredTop = el.getBoundingClientRect().top + window.scrollY - HEADER_OFFSET
+  const maxScrollTop = document.documentElement.scrollHeight - window.innerHeight
+  const missing = desiredTop - maxScrollTop
+
+  if (missing > 0) {
+    // +24px de folga, pra não parar bem na borda
+    scrollSpacerHeight.value = Math.ceil(missing) + 24
+    // espera o espaçador entrar no DOM antes de calcular o scroll máximo de novo
+    await nextTick()
+  }
+
+  const target = Math.max(desiredTop, 0)
+  window.scrollTo({ top: target, behavior: 'smooth' })
+
+  // só remove o espaçador depois que o scroll de fato assentou no alvo —
+  // nada de timeout fixo, que cortaria distâncias longas no meio do caminho
+  await waitForScrollToSettle(target)
+  scrollSpacerHeight.value = 0
+}
+
 const scrollToHashSection = async () => {
   if (!route.hash) return
 
@@ -279,8 +358,7 @@ const scrollToHashSection = async () => {
 
   await nextTick()
   const targetId = tabKey ? 'secao-detalhes' : route.hash.slice(1)
-  const el = document.getElementById(targetId)
-  el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  await scrollToTarget(targetId)
 }
 
 // cobre o caso de vir de outra rota com o hash já na URL, ou de já estar em
@@ -728,6 +806,12 @@ onMounted(loadAll)
           </ReportPanel>
         </div>
       </div>
+
+      <!-- 🟢 NOVO — espaçador temporário usado por scrollToTarget para
+           garantir espaço de rolagem suficiente em abas com pouco
+           conteúdo (ex: "Pessoas"). Fica com altura 0 na maior parte do
+           tempo; só cresce durante um scroll automático via âncora. -->
+      <div :style="{ height: scrollSpacerHeight + 'px' }" aria-hidden="true" />
     </template>
 
     <RevisionsModal
