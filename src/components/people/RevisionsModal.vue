@@ -1,7 +1,8 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { Car, Wrench, Plus, X, Loader2, AlertCircle, Pencil, Trash2, Check } from '@lucide/vue'
+import { Car, Wrench, Plus, X, Loader2, AlertCircle, Pencil, Trash2 } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
+import ConfirmModal from '../ui/ConfirmModal.vue'
 import { vehicleService } from '../../services/vehicle.service'
 import { revisionService } from '../../services/revision.service'
 import { useToast } from '../../composables/useToast'
@@ -94,8 +95,8 @@ const emptyFieldErrors = () => ({
 const fieldErrors = reactive(emptyFieldErrors())
 
 // custo nasce em 0 (não null) — pagamento é sempre informado, mesmo que gratuito
-// status/status_pagamento só são usados/exibidos no modo edição (ver template);
-// na criação a revisão nasce com o default do banco (aberto/pendente).
+// status/status_pagamento agora aparecem tanto na criação quanto na edição,
+// já nascendo com os defaults do banco (aberto/pendente) — ver template.
 const emptyForm = () => ({
   description: '',
   revision_date: new Date().toISOString().slice(0, 10),
@@ -137,7 +138,7 @@ const hasChanges = computed(() => {
 })
 
 // --- Delete state ---
-const confirmingDeleteId = ref(null)
+const revisionToDelete = ref(null) // { vehicleId, revision } | null
 const deletingRevisionId = ref(null)
 const deleteErrorByVehicle = reactive({})
 
@@ -478,7 +479,7 @@ const toggleForm = (vehicleId) => {
 
 // Open the same form pre-filled, for editing an existing revision.
 const startEdit = (vehicleId, revision) => {
-  confirmingDeleteId.value = null
+  revisionToDelete.value = null
   openFormVehicleId.value = vehicleId
   formMode.value = 'edit'
   editingRevisionId.value = revision.id
@@ -649,8 +650,9 @@ const submitRevision = async (vehicle) => {
     return
   }
 
-  // --- modo criação: comportamento original, envia tudo (status/status_pagamento
-  // nascem com o default do banco: aberto/pendente) ---
+  // --- modo criação: envia tudo, incluindo status/status_pagamento, já que
+  // esses campos agora também aparecem (com os defaults aberto/pendente,
+  // ou o que o usuário escolher) no formulário de criação ---
   isSubmitting.value = true
   try {
     const payload = {
@@ -661,10 +663,21 @@ const submitRevision = async (vehicle) => {
       cost: formData.cost ?? 0,
       next_revision_date: formData.next_revision_date || null,
       next_revision_km: formData.next_revision_km || null,
+      status: formData.status,
+      status_pagamento: formData.status_pagamento,
     }
 
     const rawCreated = await revisionService.create(payload)
-    const created = rawCreated?.data ?? rawCreated
+    const createdRaw = rawCreated?.data ?? rawCreated
+    // 🔴 AQUI — fallback: se o backend não validar/devolver status e
+    // status_pagamento na resposta da criação (por isso a tabela mostrava
+    // status vazio mesmo enviando certo), usa o que foi escolhido no
+    // formulário. Se o backend já devolver certinho, o valor dele prevalece.
+    const created = {
+      ...createdRaw,
+      status: createdRaw?.status ?? formData.status,
+      status_pagamento: createdRaw?.status_pagamento ?? formData.status_pagamento,
+    }
     const currentList = revisionsByVehicle[vehicle.id] || []
     revisionsByVehicle[vehicle.id] = sortRevisions([created, ...currentList])
     toast.success('Revisão cadastrada com sucesso!')
@@ -680,34 +693,38 @@ const submitRevision = async (vehicle) => {
   }
 }
 
-// --- Delete flow: click once to arm confirmation, click again to confirm ---
-const askDelete = (revisionId) => {
-  confirmingDeleteId.value = revisionId
+// --- Delete flow: abre o ConfirmModal padrão, igual ao usado na tela de pessoas ---
+const askDelete = (vehicleId, revision) => {
+  revisionToDelete.value = { vehicleId, revision }
 }
 
-const cancelDelete = () => {
-  confirmingDeleteId.value = null
+const closeDeleteConfirm = () => {
+  if (deletingRevisionId.value) return
+  revisionToDelete.value = null
 }
 
-const confirmDelete = async (vehicleId, revisionId) => {
-  deletingRevisionId.value = revisionId
+const confirmDelete = async () => {
+  if (!revisionToDelete.value) return
+  const { vehicleId, revision } = revisionToDelete.value
+  deletingRevisionId.value = revision.id
   deleteErrorByVehicle[vehicleId] = ''
   try {
-    await revisionService.delete(revisionId)
+    await revisionService.delete(revision.id)
     revisionsByVehicle[vehicleId] = (revisionsByVehicle[vehicleId] || []).filter(
-      (r) => r.id !== revisionId
+      (r) => r.id !== revision.id
     )
-    if (editingRevisionId.value === revisionId) {
+    if (editingRevisionId.value === revision.id) {
       closeForm()
     }
     toast.success('Revisão removida com sucesso!')
+    revisionToDelete.value = null
   } catch (err) {
     console.error('Erro ao excluir revisão:', err.response?.data ?? err)
     deleteErrorByVehicle[vehicleId] =
       err.response?.data?.message || 'Não foi possível excluir a revisão. Tente novamente.'
+    revisionToDelete.value = null
   } finally {
     deletingRevisionId.value = null
-    confirmingDeleteId.value = null
   }
 }
 
@@ -758,7 +775,10 @@ onMounted(async () => {
           </div>
           <button
             type="button"
-            class="flex shrink-0 items-center gap-1 self-start rounded-lg px-2 py-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 sm:self-auto sm:px-0 sm:py-0"
+            class="flex shrink-0 items-center gap-1 self-start rounded-lg px-2 py-1 text-xs font-medium transition-colors sm:self-auto"
+            :class="openFormVehicleId === vehicle.id && formMode === 'create'
+              ? 'text-red-600 hover:bg-red-50 hover:text-red-700'
+              : 'text-orange-600 hover:bg-orange-50 hover:text-orange-600'"
             @click="toggleForm(vehicle.id)"
           >
             <component
@@ -774,263 +794,246 @@ onMounted(async () => {
           {{ deleteErrorByVehicle[vehicle.id] }}
         </p>
 
-        <!-- Revision form: create or edit -->
-        <Transition
-          enter-active-class="transition duration-150 ease-out"
-          enter-from-class="opacity-0 -translate-y-1"
-          enter-to-class="opacity-100 translate-y-0"
-          leave-active-class="transition duration-100 ease-in"
-          leave-from-class="opacity-100"
-          leave-to-class="opacity-0"
-        >
-          <form
-            v-if="openFormVehicleId === vehicle.id"
-            :ref="setFormRef(vehicle.id)"
-            class="mb-3 rounded-xl border p-3 sm:p-4"
-            :class="formMode === 'edit' ? 'border-amber-200 bg-amber-50/60' : 'border-brand-200 bg-brand-50/60'"
-            @submit.prevent="submitRevision(vehicle)"
-          >
-            <div class="mb-3 flex items-center justify-between">
-              <p class="text-xs font-semibold" :class="formMode === 'edit' ? 'text-amber-700' : 'text-brand-700'">
-                {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
-              </p>
-              <p class="text-[11px] text-ink-400">
-                <span class="text-red-500">*</span> obrigatório
-              </p>
-            </div>
-
-            <!-- mobile-first: 1 coluna por padrão, 2 a partir do sm, 4 a partir do md -->
-            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
-              <div class="sm:col-span-2 md:col-span-4">
-                <div class="mb-1 flex items-center justify-between">
-                  <label class="text-xs font-medium text-ink-600">
-                    Descrição <span class="text-red-500">*</span>
-                  </label>
-                  <span class="text-[10px] text-ink-300">
-                    {{ formData.description.length }}/{{ DESCRIPTION_MAX_LENGTH }}
-                  </span>
-                </div>
-                <input
-                  :ref="setDescriptionInputRef(vehicle.id)"
-                  v-model="formData.description"
-                  type="text"
-                  maxlength="150"
-                  placeholder="Ex: Troca de óleo e filtros"
-                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1 sm:py-2"
-                  :class="fieldErrors.description
-                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
-                  @input="fieldErrors.description = ''"
-                />
-                <p v-if="fieldErrors.description" class="mt-1 text-[11px] text-red-600" role="alert">
-                  {{ fieldErrors.description }}
-                </p>
-              </div>
-
-              <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">
-                  Data da revisão atual <span class="text-red-500">*</span>
-                </label>
-                <input
-                  v-model="formData.revision_date"
-                  type="date"
-                  :max="maxRevisionDate"
-                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
-                  :class="fieldErrors.revision_date
-                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
-                  @input="fieldErrors.revision_date = ''"
-                />
-                <p v-if="fieldErrors.revision_date" class="mt-1 text-[11px] text-red-600" role="alert">
-                  {{ fieldErrors.revision_date }}
-                </p>
-              </div>
-
-              <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">KM da revisão atual</label>
-                <input
-                  v-model="kmModel"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="Ex: 0 km"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
-                  @keydown="blockKmOverflow"
-                  @paste="blockKmPaste"
-                />
-              </div>
-
-              <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">
-                  Custo (R$) <span class="text-red-500">*</span>
-                </label>
-                <input
-                  v-model="costModel"
-                  type="text"
-                  inputmode="decimal"
-                  placeholder="0,00"
-                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1 sm:py-2"
-                  :class="fieldErrors.cost
-                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
-                  @keydown="blockCostOverflow"
-                  @paste="blockCostPaste"
-                />
-                <p v-if="fieldErrors.cost" class="mt-1 text-[11px] text-red-600" role="alert">
-                  {{ fieldErrors.cost }}
-                </p>
-                <p v-else class="mt-1 text-[11px] text-ink-400">
-                  Serviço gratuito? Informe 0,00.
-                </p>
-              </div>
-
-              <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">Data da próxima revisão</label>
-                <input
-                  v-model="formData.next_revision_date"
-                  type="date"
-                  :min="minNextRevisionDate"
-                  :max="maxNextRevisionDate"
-                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
-                  :class="fieldErrors.next_revision_date
-                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
-                  @input="fieldErrors.next_revision_date = ''"
-                />
-                <p v-if="fieldErrors.next_revision_date" class="mt-1 text-[11px] text-red-600" role="alert">
-                  {{ fieldErrors.next_revision_date }}
-                </p>
-                <p v-else class="mt-1 text-[11px] text-ink-400">
-                  Até {{ MAX_YEARS_AHEAD }} anos a partir de hoje.
-                </p>
-              </div>
-
-              <div>
-                <label class="mb-1 block text-xs font-medium text-ink-600">KM da próxima revisão</label>
-                <input
-                  v-model="nextRevisionKmModel"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="Ex: 0 km"
-                  class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
-                  :class="fieldErrors.next_revision_km
-                    ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
-                    : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
-                  @keydown="blockKmOverflow"
-                  @paste="blockNextRevisionKmPaste"
-                />
-                <p v-if="fieldErrors.next_revision_km" class="mt-1 text-[11px] text-red-600" role="alert">
-                  {{ fieldErrors.next_revision_km }}
-                </p>
-              </div>
-
-              <!-- 🔴 AQUI — status e status de pagamento ficam do lado da próxima
-                   revisão (mesma grid), só no modo edição. Uma revisão nasce
-                   "aberto/pendente" e é atualizada depois, via Kanban (arrastar)
-                   ou aqui manualmente. -->
-              <div v-if="formMode === 'edit'">
-                <label class="mb-1 block text-xs font-medium text-ink-600">Status</label>
-                <select
-                  v-model="formData.status"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
-                >
-                  <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
-                    {{ opt.label }}
-                  </option>
-                </select>
-              </div>
-
-              <div v-if="formMode === 'edit'">
-                <label class="mb-1 block text-xs font-medium text-ink-600">Status de pagamento</label>
-                <select
-                  v-model="formData.status_pagamento"
-                  class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
-                >
-                  <option v-for="opt in STATUS_PAGAMENTO_OPTIONS" :key="opt.value" :value="opt.value">
-                    {{ opt.label }}
-                  </option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Ações do formulário: empilha e ocupa a largura toda no mobile,
-                 vira linha alinhada à direita a partir do sm -->
-            <div
-              class="mt-3 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-end"
-              :class="formMode === 'edit' ? 'border-amber-100' : 'border-brand-100'"
-            >
-              <p v-if="formError" class="flex items-start gap-1 text-xs text-red-600 sm:mr-auto sm:items-center" role="alert">
-                <AlertCircle :size="13" class="mt-0.5 shrink-0 sm:mt-0" />
-                {{ formError }}
-              </p>
-              <div class="flex gap-3 sm:contents">
-                <button
-                  type="button"
-                  class="flex-1 rounded-lg px-3 py-2 text-xs font-medium text-ink-500 transition-colors hover:bg-ink-100 sm:flex-none sm:py-1.5"
-                  @click="closeForm"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  :disabled="isSubmitting || !hasChanges"
-                  class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:py-1.5"
-                  :class="formMode === 'edit' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-brand-600 hover:bg-brand-700'"
-                >
-                  <Loader2 v-if="isSubmitting" :size="13" class="animate-spin" />
-                  {{ isSubmitting ? 'Salvando...' : formMode === 'edit' ? 'Salvar alterações' : 'Salvar revisão' }}
-                </button>
-              </div>
-            </div>
-          </form>
-        </Transition>
-
-        <!-- Sem revisões: mesma mensagem em ambos os layouts -->
+        <!-- 🔴 AQUI — bloco unificado: quando o formulário (criação OU edição)
+             está aberto, o formulário e a lista de revisões desse veículo
+             ficam dentro de UM único enquadramento (borda preta), como um
+             bloco só — "os dados que vamos editar" em cima e "a revisão" logo
+             abaixo, sem cores diferentes por modo. Quando não há formulário
+             aberto, este div fica transparente (sem borda/padding). -->
         <div
-          v-if="!revisionsByVehicle[vehicle.id]?.length"
-          class="rounded-xl border border-ink-100 px-3 py-4 text-center text-xs text-ink-400"
+          :class="openFormVehicleId === vehicle.id
+            ? 'rounded-2xl border-2 border-ink-900 bg-white p-3 shadow-sm sm:p-4'
+            : ''"
         >
-          Nenhuma revisão registrada.
-        </div>
-
-        <template v-else>
-          <!-- ===== MOBILE (< sm): lista de cards em vez de tabela ===== -->
-          <div class="flex flex-col gap-2 sm:hidden">
-            <div
-              v-for="revision in revisionsByVehicle[vehicle.id]"
-              :key="revision.id"
-              class="rounded-xl border border-ink-100 p-3 text-xs"
-              :class="editingRevisionId === revision.id ? 'bg-amber-50/50' : 'bg-white'"
+          <Transition
+            enter-active-class="transition duration-150 ease-out"
+            enter-from-class="opacity-0 -translate-y-1"
+            enter-to-class="opacity-100 translate-y-0"
+            leave-active-class="transition duration-100 ease-in"
+            leave-from-class="opacity-100"
+            leave-to-class="opacity-0"
+          >
+            <form
+              v-if="openFormVehicleId === vehicle.id"
+              :ref="setFormRef(vehicle.id)"
+              class="mb-3 border-b border-ink-100 pb-3"
+              @submit.prevent="submitRevision(vehicle)"
             >
-              <div class="mb-2 flex items-start justify-between gap-2">
-                <div class="flex min-w-0 items-center gap-1.5 text-ink-700">
-                  <Wrench :size="12" class="shrink-0 text-ink-400" />
-                  <span class="truncate font-medium">{{ revision.description || '—' }}</span>
+              <div class="mb-3 flex items-center justify-between">
+                <p class="flex items-center gap-1.5 text-xs font-semibold text-ink-900">
+                  <component :is="formMode === 'edit' ? Pencil : Plus" :size="13" />
+                  {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
+                </p>
+                <p class="text-[11px] text-ink-400">
+                  <span class="text-red-500">*</span> obrigatório
+                </p>
+              </div>
+
+              <!-- mobile-first: 1 coluna por padrão, 2 a partir do sm, 4 a partir do md -->
+              <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+                <div class="sm:col-span-2 md:col-span-4">
+                  <div class="mb-1 flex items-center justify-between">
+                    <label class="text-xs font-medium text-ink-600">
+                      Descrição <span class="text-red-500">*</span>
+                    </label>
+                    <span class="text-[10px] text-ink-300">
+                      {{ formData.description.length }}/{{ DESCRIPTION_MAX_LENGTH }}
+                    </span>
+                  </div>
+                  <input
+                    :ref="setDescriptionInputRef(vehicle.id)"
+                    v-model="formData.description"
+                    type="text"
+                    maxlength="150"
+                    placeholder="Ex: Troca de óleo e filtros"
+                    class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1 sm:py-2"
+                    :class="fieldErrors.description
+                      ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                      : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                    @input="fieldErrors.description = ''"
+                  />
+                  <p v-if="fieldErrors.description" class="mt-1 text-[11px] text-red-600" role="alert">
+                    {{ fieldErrors.description }}
+                  </p>
                 </div>
 
-                <div class="flex shrink-0 items-center gap-1">
-                  <template v-if="confirmingDeleteId === revision.id">
-                    <span class="mr-0.5 text-[11px] text-ink-500">Excluir?</span>
-                    <button
-                      type="button"
-                      title="Confirmar exclusão"
-                      :disabled="deletingRevisionId === revision.id"
-                      class="rounded-md p-1.5 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-                      @click="confirmDelete(vehicle.id, revision.id)"
-                    >
-                      <Loader2 v-if="deletingRevisionId === revision.id" :size="14" class="animate-spin" />
-                      <Check v-else :size="14" />
-                    </button>
-                    <button
-                      type="button"
-                      title="Cancelar"
-                      :disabled="deletingRevisionId === revision.id"
-                      class="rounded-md p-1.5 text-ink-400 transition-colors hover:bg-ink-100 disabled:opacity-50"
-                      @click="cancelDelete"
-                    >
-                      <X :size="14" />
-                    </button>
-                  </template>
-                  <template v-else>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-ink-600">
+                    Data da revisão atual <span class="text-red-500">*</span>
+                  </label>
+                  <input
+                    v-model="formData.revision_date"
+                    type="date"
+                    :max="maxRevisionDate"
+                    class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
+                    :class="fieldErrors.revision_date
+                      ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                      : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                    @input="fieldErrors.revision_date = ''"
+                  />
+                  <p v-if="fieldErrors.revision_date" class="mt-1 text-[11px] text-red-600" role="alert">
+                    {{ fieldErrors.revision_date }}
+                  </p>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-ink-600">KM da revisão atual</label>
+                  <input
+                    v-model="kmModel"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="Ex: 0 km"
+                    class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
+                    @keydown="blockKmOverflow"
+                    @paste="blockKmPaste"
+                  />
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-ink-600">
+                    Custo (R$) <span class="text-red-500">*</span>
+                  </label>
+                  <input
+                    v-model="costModel"
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="0,00"
+                    class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-1 sm:py-2"
+                    :class="fieldErrors.cost
+                      ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                      : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                    @keydown="blockCostOverflow"
+                    @paste="blockCostPaste"
+                  />
+                  <p v-if="fieldErrors.cost" class="mt-1 text-[11px] text-red-600" role="alert">
+                    {{ fieldErrors.cost }}
+                  </p>
+                  <p v-else class="mt-1 text-[11px] text-ink-400">
+                    Serviço gratuito? Informe 0,00.
+                  </p>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-ink-600">Data da próxima revisão</label>
+                  <input
+                    v-model="formData.next_revision_date"
+                    type="date"
+                    :min="minNextRevisionDate"
+                    :max="maxNextRevisionDate"
+                    class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
+                    :class="fieldErrors.next_revision_date
+                      ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                      : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                    @input="fieldErrors.next_revision_date = ''"
+                  />
+                  <p v-if="fieldErrors.next_revision_date" class="mt-1 text-[11px] text-red-600" role="alert">
+                    {{ fieldErrors.next_revision_date }}
+                  </p>
+                  <p v-else class="mt-1 text-[11px] text-ink-400">
+                    Até {{ MAX_YEARS_AHEAD }} anos a partir de hoje.
+                  </p>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-ink-600">KM da próxima revisão</label>
+                  <input
+                    v-model="nextRevisionKmModel"
+                    type="text"
+                    inputmode="numeric"
+                    placeholder="Ex: 0 km"
+                    class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
+                    :class="fieldErrors.next_revision_km
+                      ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
+                      : 'border-ink-200 focus:border-brand-500 focus:ring-brand-500'"
+                    @keydown="blockKmOverflow"
+                    @paste="blockNextRevisionKmPaste"
+                  />
+                  <p v-if="fieldErrors.next_revision_km" class="mt-1 text-[11px] text-red-600" role="alert">
+                    {{ fieldErrors.next_revision_km }}
+                  </p>
+                </div>
+
+                <!-- 🔴 AQUI — status e status de pagamento agora aparecem SEMPRE
+                     (criação e edição), já nascendo com os defaults do banco
+                     (aberto/pendente) na criação. -->
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-ink-600">Status</label>
+                  <select
+                    v-model="formData.status"
+                    class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
+                  >
+                    <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-ink-600">Status de pagamento</label>
+                  <select
+                    v-model="formData.status_pagamento"
+                    class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
+                  >
+                    <option v-for="opt in STATUS_PAGAMENTO_OPTIONS" :key="opt.value" :value="opt.value">
+                      {{ opt.label }}
+                    </option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Ações do formulário: empilha e ocupa a largura toda no mobile,
+                   vira linha alinhada à direita a partir do sm -->
+              <div class="mt-3 flex flex-col gap-3 border-t border-ink-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
+                <p v-if="formError" class="flex items-start gap-1 text-xs text-red-600 sm:mr-auto sm:items-center" role="alert">
+                  <AlertCircle :size="13" class="mt-0.5 shrink-0 sm:mt-0" />
+                  {{ formError }}
+                </p>
+                <div class="flex gap-3 sm:contents">
+                  <button
+                    type="button"
+                    class="flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors sm:flex-none sm:py-1.5 text-red-600 hover:bg-red-50 hover:text-red-700"
+                    @click="closeForm"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    :disabled="isSubmitting || !hasChanges"
+                    class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-white transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:py-1.5"
+                    :class="formMode === 'edit' ? 'bg-ink-900 hover:bg-ink-800' : 'bg-brand-600 hover:bg-brand-700'"
+                  >
+                    <Loader2 v-if="isSubmitting" :size="13" class="animate-spin" />
+                    {{ isSubmitting ? 'Salvando...' : formMode === 'edit' ? 'Salvar alterações' : 'Salvar revisão' }}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </Transition>
+
+          <!-- Sem revisões: mesma mensagem em ambos os layouts -->
+          <div
+            v-if="!revisionsByVehicle[vehicle.id]?.length"
+            class="rounded-xl border border-ink-100 px-3 py-4 text-center text-xs text-ink-400"
+          >
+            Nenhuma revisão registrada.
+          </div>
+
+          <template v-else>
+            <!-- ===== MOBILE (< sm): lista de cards em vez de tabela ===== -->
+            <div class="flex flex-col gap-2 sm:hidden">
+              <div
+                v-for="revision in revisionsByVehicle[vehicle.id]"
+                :key="revision.id"
+                class="rounded-xl border border-ink-100 p-3 text-xs"
+                :class="editingRevisionId === revision.id ? 'bg-ink-50' : 'bg-white'"
+              >
+                <div class="mb-2 flex items-start justify-between gap-2">
+                  <div class="flex min-w-0 items-center gap-1.5 text-ink-700">
+                    <Wrench :size="12" class="shrink-0 text-ink-400" />
+                    <span class="truncate font-medium">{{ revision.description || '—' }}</span>
+                  </div>
+
+                  <div class="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
                       title="Editar revisão"
@@ -1043,135 +1046,119 @@ onMounted(async () => {
                       type="button"
                       title="Excluir revisão"
                       class="rounded-md p-1.5 text-ink-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                      @click="askDelete(revision.id)"
+                      @click="askDelete(vehicle.id, revision)"
                     >
                       <Trash2 :size="14" />
                     </button>
-                  </template>
+                  </div>
                 </div>
-              </div>
 
-              <!-- 🔴 AQUI — badges de status e pagamento -->
-              <div class="mb-2 flex flex-wrap items-center gap-1.5">
-                <span
-                  class="rounded-full border px-2 py-0.5 text-[10px] font-medium"
-                  :class="STATUS_BADGE_CLASSES[revision.status] || 'border-ink-200 text-ink-500'"
-                >
-                  {{ statusLabel(revision.status) }}
-                </span>
-                <span
-                  class="rounded-full border px-2 py-0.5 text-[10px] font-medium"
-                  :class="STATUS_PAGAMENTO_BADGE_CLASSES[revision.status_pagamento] || 'border-ink-200 text-ink-500'"
-                >
-                  {{ statusPagamentoLabel(revision.status_pagamento) }}
-                </span>
-              </div>
+                <!-- 🔴 AQUI — badges de status e pagamento, agora rotulados
+                     ("Status:" / "Pagamento:") pra não serem confundidos —
+                     mesmo padrão visual usado em Data/KM/Custo abaixo. -->
+                <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <div class="flex items-center gap-1">
+                    <span class="text-ink-400">Status:</span>
+                    <span
+                      class="rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                      :class="STATUS_BADGE_CLASSES[revision.status] || 'border-ink-200 text-ink-500'"
+                    >
+                      {{ statusLabel(revision.status) }}
+                    </span>
+                  </div>
+                  <div class="flex items-center gap-1">
+                    <span class="text-ink-400">Pagamento:</span>
+                    <span
+                      class="rounded-full border px-2 py-0.5 text-[10px] font-medium"
+                      :class="STATUS_PAGAMENTO_BADGE_CLASSES[revision.status_pagamento] || 'border-ink-200 text-ink-500'"
+                    >
+                      {{ statusPagamentoLabel(revision.status_pagamento) }}
+                    </span>
+                  </div>
+                </div>
 
-              <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-ink-600">
-                <div>
-                  <span class="text-ink-400">Data:</span>
-                  {{ formatDate(revision.revision_date) }}
-                </div>
-                <div>
-                  <span class="text-ink-400">KM:</span>
-                  {{ revision.km ? Number(revision.km).toLocaleString('pt-BR') : '—' }}
-                </div>
-                <div>
-                  <span class="text-ink-400">Custo:</span>
-                  {{ formatCurrency(revision.cost) }}
-                </div>
-                <div :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''">
-                  <span class="text-ink-400" :class="isOverdue(revision.next_revision_date) ? 'text-red-400' : ''">Próxima:</span>
-                  {{ formatDate(revision.next_revision_date) }}
-                  <span v-if="revision.next_revision_km" class="block text-[11px] text-ink-400">
-                    {{ Number(revision.next_revision_km).toLocaleString('pt-BR') }} km
-                  </span>
+                <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-ink-600">
+                  <div>
+                    <span class="text-ink-400">Data:</span>
+                    {{ formatDate(revision.revision_date) }}
+                  </div>
+                  <div>
+                    <span class="text-ink-400">KM:</span>
+                    {{ revision.km ? Number(revision.km).toLocaleString('pt-BR') : '—' }}
+                  </div>
+                  <div>
+                    <span class="text-ink-400">Custo:</span>
+                    {{ formatCurrency(revision.cost) }}
+                  </div>
+                  <div :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''">
+                    <span class="text-ink-400" :class="isOverdue(revision.next_revision_date) ? 'text-red-400' : ''">Próxima:</span>
+                    {{ formatDate(revision.next_revision_date) }}
+                    <span v-if="revision.next_revision_km" class="block text-[11px] text-ink-400">
+                      {{ Number(revision.next_revision_km).toLocaleString('pt-BR') }} km
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- ===== DESKTOP (>= sm): tabela original ===== -->
-          <div class="hidden overflow-x-auto rounded-xl border border-ink-100 sm:block">
-            <table class="w-full min-w-[640px] text-left text-xs">
-              <thead class="bg-ink-50 text-ink-500">
-                <tr>
-                  <th class="px-3 py-2 font-medium">Descrição</th>
-                  <th class="px-3 py-2 font-medium">Data</th>
-                  <th class="px-3 py-2 font-medium">KM</th>
-                  <th class="px-3 py-2 font-medium">Custo</th>
-                  <th class="px-3 py-2 font-medium">Status</th>
-                  <th class="px-3 py-2 font-medium">Próxima revisão</th>
-                  <th class="px-3 py-2 font-medium text-right">Ações</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-ink-100">
-                <tr
-                  v-for="revision in revisionsByVehicle[vehicle.id]"
-                  :key="revision.id"
-                  class="text-ink-700"
-                  :class="editingRevisionId === revision.id ? 'bg-amber-50/50' : ''"
-                >
-                  <td class="px-3 py-2">
-                    <div class="flex items-center gap-1.5">
-                      <Wrench :size="12" class="text-ink-400" />
-                      {{ revision.description || '—' }}
-                    </div>
-                  </td>
-                  <td class="px-3 py-2">{{ formatDate(revision.revision_date) }}</td>
-                  <td class="px-3 py-2">{{ revision.km ? Number(revision.km).toLocaleString('pt-BR') : '—' }}</td>
-                  <td class="px-3 py-2">{{ formatCurrency(revision.cost) }}</td>
-                  <td class="px-3 py-2">
-                    <div class="flex flex-col gap-1">
+            <!-- ===== DESKTOP (>= sm): tabela original ===== -->
+            <div class="hidden overflow-x-auto rounded-xl border border-ink-100 sm:block">
+              <table class="w-full min-w-[640px] text-left text-xs">
+                <thead class="bg-ink-50 text-ink-500">
+                  <tr>
+                    <th class="px-3 py-2 font-medium">Descrição</th>
+                    <th class="px-3 py-2 font-medium">Data</th>
+                    <th class="px-3 py-2 font-medium">KM</th>
+                    <th class="px-3 py-2 font-medium">Custo</th>
+                    <th class="px-3 py-2 font-medium">Status</th>
+                    <th class="px-3 py-2 font-medium">Pagamento</th>
+                    <th class="px-3 py-2 font-medium">Próxima revisão</th>
+                    <th class="px-3 py-2 font-medium text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-ink-100">
+                  <tr
+                    v-for="revision in revisionsByVehicle[vehicle.id]"
+                    :key="revision.id"
+                    class="text-ink-700"
+                    :class="editingRevisionId === revision.id ? 'bg-ink-50' : ''"
+                  >
+                    <td class="px-3 py-2">
+                      <div class="flex items-center gap-1.5">
+                        <Wrench :size="12" class="text-ink-400" />
+                        {{ revision.description || '—' }}
+                      </div>
+                    </td>
+                    <td class="px-3 py-2">{{ formatDate(revision.revision_date) }}</td>
+                    <td class="px-3 py-2">{{ revision.km ? Number(revision.km).toLocaleString('pt-BR') : '—' }}</td>
+                    <td class="px-3 py-2">{{ formatCurrency(revision.cost) }}</td>
+                    <td class="px-3 py-2">
                       <span
                         class="w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium"
                         :class="STATUS_BADGE_CLASSES[revision.status] || 'border-ink-200 text-ink-500'"
                       >
                         {{ statusLabel(revision.status) }}
                       </span>
+                    </td>
+                    <td class="px-3 py-2">
                       <span
                         class="w-fit rounded-full border px-2 py-0.5 text-[10px] font-medium"
                         :class="STATUS_PAGAMENTO_BADGE_CLASSES[revision.status_pagamento] || 'border-ink-200 text-ink-500'"
                       >
                         {{ statusPagamentoLabel(revision.status_pagamento) }}
                       </span>
-                    </div>
-                  </td>
-                  <td
-                    class="px-3 py-2"
-                    :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''"
-                  >
-                    <div>{{ formatDate(revision.next_revision_date) }}</div>
-                    <div v-if="revision.next_revision_km" class="text-[11px] text-ink-400">
-                      {{ Number(revision.next_revision_km).toLocaleString('pt-BR') }} km
-                    </div>
-                  </td>
-                  <td class="px-3 py-2">
-                    <div class="flex items-center justify-end gap-1">
-                      <!-- Two-step delete confirmation, no native confirm() -->
-                      <template v-if="confirmingDeleteId === revision.id">
-                        <span class="mr-1 text-[11px] text-ink-500">Excluir?</span>
-                        <button
-                          type="button"
-                          title="Confirmar exclusão"
-                          :disabled="deletingRevisionId === revision.id"
-                          class="rounded-md p-1 text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-                          @click="confirmDelete(vehicle.id, revision.id)"
-                        >
-                          <Loader2 v-if="deletingRevisionId === revision.id" :size="14" class="animate-spin" />
-                          <Check v-else :size="14" />
-                        </button>
-                        <button
-                          type="button"
-                          title="Cancelar"
-                          :disabled="deletingRevisionId === revision.id"
-                          class="rounded-md p-1 text-ink-400 transition-colors hover:bg-ink-100 disabled:opacity-50"
-                          @click="cancelDelete"
-                        >
-                          <X :size="14" />
-                        </button>
-                      </template>
-                      <template v-else>
+                    </td>
+                    <td
+                      class="px-3 py-2"
+                      :class="isOverdue(revision.next_revision_date) ? 'font-medium text-red-600' : ''"
+                    >
+                      <div>{{ formatDate(revision.next_revision_date) }}</div>
+                      <div v-if="revision.next_revision_km" class="text-[11px] text-ink-400">
+                        {{ Number(revision.next_revision_km).toLocaleString('pt-BR') }} km
+                      </div>
+                    </td>
+                    <td class="px-3 py-2">
+                      <div class="flex items-center justify-end gap-1">
                         <button
                           type="button"
                           title="Editar revisão"
@@ -1184,19 +1171,31 @@ onMounted(async () => {
                           type="button"
                           title="Excluir revisão"
                           class="rounded-md p-1 text-ink-400 transition-colors hover:bg-red-50 hover:text-red-600"
-                          @click="askDelete(revision.id)"
+                          @click="askDelete(vehicle.id, revision)"
                         >
                           <Trash2 :size="14" />
                         </button>
-                      </template>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </template>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </div>
       </div>
     </div>
+
+    <!-- 🔴 AQUI — mesmo ConfirmModal padrão usado em Pessoas, em vez da
+         confirmação inline minimalista de antes -->
+    <ConfirmModal
+      v-if="revisionToDelete"
+      title="Remover revisão"
+      :message="`Tem certeza que deseja remover a revisão &quot;${revisionToDelete.revision.description || 'sem descrição'}&quot;? Essa ação não pode ser desfeita.`"
+      confirm-label="Remover"
+      :is-loading="deletingRevisionId === revisionToDelete.revision.id"
+      @close="closeDeleteConfirm"
+      @confirm="confirmDelete"
+    />
   </BaseModal>
 </template>
