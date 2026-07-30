@@ -1,9 +1,8 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { Clock, FileText, GripVertical, Pencil, Plus, Search, X } from '@lucide/vue'
+import { Calendar, Clock, FileText, GripVertical, IdCard, Pencil, Search, X } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
-import BaseButton from '../components/ui/BaseButton.vue'
 // mesmo modal já usado em Pessoas e Relatórios
 import RevisionsModal from '../components/people/RevisionsModal.vue'
 import { revisionService } from '../services/revision.service'
@@ -60,17 +59,37 @@ watch(error, (err) => {
 })
 
 // ---------------------------------------------------------------------------
-// Filtro por nome (da pessoa) — mesmo padrão de limite/contador da tela
-// de Proprietários (maxlength + truncamento em JS + contador "fantasma")
+// Filtros — todos seguem o mesmo padrão de input/limite/contador "fantasma"
+// usado originalmente só no filtro de nome do proprietário.
 // ---------------------------------------------------------------------------
 const NAME_FILTER_MAX_LENGTH = 40
+const DESCRICAO_FILTER_MAX_LENGTH = 60
+const PLACA_FILTER_MAX_LENGTH = 8 // cobre ABC-1234 (antiga) e ABC1D23 (Mercosul)
 
 const filtroNome = ref('')
+const filtroDescricao = ref('')
+const filtroPlaca = ref('')
+const filtroDataDe = ref('')
+const filtroDataAte = ref('')
 
 const sanitizeNameFilter = () => {
   if (filtroNome.value.length > NAME_FILTER_MAX_LENGTH) {
     filtroNome.value = filtroNome.value.slice(0, NAME_FILTER_MAX_LENGTH)
   }
+}
+
+const sanitizeDescricaoFilter = () => {
+  if (filtroDescricao.value.length > DESCRICAO_FILTER_MAX_LENGTH) {
+    filtroDescricao.value = filtroDescricao.value.slice(0, DESCRICAO_FILTER_MAX_LENGTH)
+  }
+}
+
+const sanitizePlacaFilter = () => {
+  if (filtroPlaca.value.length > PLACA_FILTER_MAX_LENGTH) {
+    filtroPlaca.value = filtroPlaca.value.slice(0, PLACA_FILTER_MAX_LENGTH)
+  }
+  // placas são sempre maiúsculas — normaliza direto no que o usuário digita
+  filtroPlaca.value = filtroPlaca.value.toUpperCase()
 }
 
 // normaliza removendo acentos, pra "joao" encontrar "João"
@@ -82,19 +101,89 @@ const normalizar = (texto) =>
     .toLowerCase()
     .trim()
 
+// normaliza placa removendo tudo que não é letra/número, pra "abc1234"
+// encontrar tanto "ABC-1234" quanto "ABC1234"
+const normalizarPlaca = (placa) =>
+  (placa || '')
+    .toString()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+
 const revisoesFiltradas = computed(() => {
   const lista = revisoes.value ?? []
-  const termo = normalizar(filtroNome.value)
-  if (!termo) return lista
-  return lista.filter((r) => normalizar(r.person_name).includes(termo))
+
+  const termoNome = normalizar(filtroNome.value)
+  const termoDescricao = normalizar(filtroDescricao.value)
+  const termoPlaca = normalizarPlaca(filtroPlaca.value)
+
+  const dataDe = filtroDataDe.value ? new Date(`${filtroDataDe.value}T00:00:00`) : null
+  // "Até" precisa cobrir o dia inteiro, senão registros do próprio dia
+  // ficariam de fora por causa da hora zerada
+  const dataAte = filtroDataAte.value ? new Date(`${filtroDataAte.value}T23:59:59`) : null
+
+  return lista.filter((r) => {
+    if (termoNome && !normalizar(r.person_name).includes(termoNome)) return false
+    if (termoDescricao && !normalizar(r.description).includes(termoDescricao)) return false
+    if (termoPlaca && !normalizarPlaca(r.vehicle_license_plate).includes(termoPlaca)) return false
+
+    if (dataDe || dataAte) {
+      const dataRevisao = new Date(r.revision_date)
+      if (dataDe && dataRevisao < dataDe) return false
+      if (dataAte && dataRevisao > dataAte) return false
+    }
+
+    return true
+  })
 })
 
-const limparFiltro = () => {
+const limparFiltroNome = () => {
   filtroNome.value = ''
 }
+const limparFiltroDescricao = () => {
+  filtroDescricao.value = ''
+}
+const limparFiltroPlaca = () => {
+  filtroPlaca.value = ''
+}
+const limparFiltroData = () => {
+  filtroDataDe.value = ''
+  filtroDataAte.value = ''
+}
+
+// chips de filtros ativos, exibidos abaixo dos inputs — cada um com seu
+// próprio botão de remover
+const filtrosAtivos = computed(() => {
+  const chips = []
+
+  if (filtroNome.value) {
+    chips.push({ key: 'nome', label: 'Nome', valor: filtroNome.value, limpar: limparFiltroNome })
+  }
+  if (filtroDescricao.value) {
+    chips.push({
+      key: 'descricao',
+      label: 'Descrição',
+      valor: filtroDescricao.value,
+      limpar: limparFiltroDescricao,
+    })
+  }
+  if (filtroPlaca.value) {
+    chips.push({ key: 'placa', label: 'Placa', valor: filtroPlaca.value, limpar: limparFiltroPlaca })
+  }
+  if (filtroDataDe.value || filtroDataAte.value) {
+    const de = filtroDataDe.value ? new Date(`${filtroDataDe.value}T00:00:00`).toLocaleDateString('pt-BR') : '...'
+    const ate = filtroDataAte.value
+      ? new Date(`${filtroDataAte.value}T00:00:00`).toLocaleDateString('pt-BR')
+      : '...'
+    chips.push({ key: 'data', label: 'Período', valor: `${de} – ${ate}`, limpar: limparFiltroData })
+  }
+
+  return chips
+})
+
+const algumFiltroAtivo = computed(() => filtrosAtivos.value.length > 0)
 
 // Um array reativo por coluna — reconstruído sempre que a query trouxer
-// dados novos, ou quando o filtro de nome mudar (ou depois de um rollback
+// dados novos, ou quando algum filtro mudar (ou depois de um rollback
 // de drag-and-drop).
 const colunasData = reactive(Object.fromEntries(COLUNAS.map(({ status }) => [status, []])))
 
@@ -112,7 +201,7 @@ watch(
 const valorTotalColuna = (status) =>
   formatCurrency(colunasData[status].reduce((soma, r) => soma + Number(r.cost || 0), 0))
 
-// Total de cards visíveis com o filtro aplicado (pra feedback no chip)
+// Total de cards visíveis com os filtros aplicados (pra feedback no chip)
 const totalFiltrado = computed(() =>
   COLUNAS.reduce((soma, { status }) => soma + colunasData[status].length, 0),
 )
@@ -195,51 +284,108 @@ const closeRevisionsModal = () => {
 
 <template>
   <AppShell title="Kanban de Revisões" subtitle="Acompanhe o andamento de cada revisão por etapa.">
-    <template #actions>
-      <router-link to="/revisoes">
-        <BaseButton variant="outline">Ver em lista</BaseButton>
-      </router-link>
-      <BaseButton variant="primary">
-        <Plus :size="16" />
-        Nova revisão
-      </BaseButton>
-    </template>
-
-    <!-- Filtro por nome — mesmo cartão/inputs/contador/chip da tela de
-         Proprietários -->
+    <!-- Filtros — nome, descrição, placa e período, todos no mesmo padrão
+         de cartão/inputs/contador/chip -->
     <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">
-      <div class="relative max-w-xs">
-        <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-        <input
-          v-model="filtroNome"
-          type="text"
-          placeholder="Filtrar por nome do proprietário"
-          :maxlength="NAME_FILTER_MAX_LENGTH"
-          class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-14 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
-          @input="sanitizeNameFilter"
-        />
-        <span
-          class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums"
-          :class="filtroNome.length >= NAME_FILTER_MAX_LENGTH ? 'text-amber-500' : 'text-ink-300'"
-        >
-          {{ filtroNome.length }}/{{ NAME_FILTER_MAX_LENGTH }}
-        </span>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <!-- Nome do proprietário -->
+        <div class="relative">
+          <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
+          <input
+            v-model="filtroNome"
+            type="text"
+            placeholder="Filtrar por nome do proprietário"
+            :maxlength="NAME_FILTER_MAX_LENGTH"
+            class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-14 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+            @input="sanitizeNameFilter"
+          />
+          <span
+            class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums"
+            :class="filtroNome.length >= NAME_FILTER_MAX_LENGTH ? 'text-amber-500' : 'text-ink-300'"
+          >
+            {{ filtroNome.length }}/{{ NAME_FILTER_MAX_LENGTH }}
+          </span>
+        </div>
+
+        <!-- Descrição da revisão -->
+        <div class="relative">
+          <FileText :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
+          <input
+            v-model="filtroDescricao"
+            type="text"
+            placeholder="Filtrar por descrição"
+            :maxlength="DESCRICAO_FILTER_MAX_LENGTH"
+            class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-14 text-sm text-ink-700 placeholder:text-ink-300 focus:border-brand-400 focus:outline-none"
+            @input="sanitizeDescricaoFilter"
+          />
+          <span
+            class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums"
+            :class="filtroDescricao.length >= DESCRICAO_FILTER_MAX_LENGTH ? 'text-amber-500' : 'text-ink-300'"
+          >
+            {{ filtroDescricao.length }}/{{ DESCRICAO_FILTER_MAX_LENGTH }}
+          </span>
+        </div>
+
+        <!-- Placa do veículo -->
+        <div class="relative">
+          <IdCard :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
+          <input
+            v-model="filtroPlaca"
+            type="text"
+            placeholder="ABC1234"
+            :maxlength="PLACA_FILTER_MAX_LENGTH"
+            class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-14 text-sm uppercase text-ink-700 placeholder:text-ink-300 placeholder:normal-case focus:border-brand-400 focus:outline-none"
+            @input="sanitizePlacaFilter"
+          />
+          <span
+            class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium tabular-nums"
+            :class="filtroPlaca.length >= PLACA_FILTER_MAX_LENGTH ? 'text-amber-500' : 'text-ink-300'"
+          >
+            {{ filtroPlaca.length }}/{{ PLACA_FILTER_MAX_LENGTH }}
+          </span>
+        </div>
+
+        <!-- Período (data da revisão) -->
+        <div class="flex items-center gap-2">
+          <div class="relative flex-1">
+            <Calendar :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
+            <input
+              v-model="filtroDataDe"
+              type="date"
+              aria-label="Data inicial"
+              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-2 text-sm text-ink-700 focus:border-brand-400 focus:outline-none"
+            />
+          </div>
+          <span class="text-xs text-ink-300">até</span>
+          <div class="relative flex-1">
+            <Calendar :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
+            <input
+              v-model="filtroDataAte"
+              type="date"
+              aria-label="Data final"
+              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-2 text-sm text-ink-700 focus:border-brand-400 focus:outline-none"
+            />
+          </div>
+        </div>
       </div>
 
-      <!-- chip de filtro ativo, no mesmo padrão da tela de Proprietários -->
-      <div v-if="filtroNome" class="mt-3 flex flex-wrap items-center gap-2">
+      <!-- chips dos filtros ativos, no mesmo padrão da tela de
+           Proprietários -->
+      <div v-if="algumFiltroAtivo" class="mt-3 flex flex-wrap items-center gap-2">
         <span class="text-xs text-ink-500">{{ totalFiltrado }} encontrada(s):</span>
 
         <span
+          v-for="chip in filtrosAtivos"
+          :key="chip.key"
           class="inline-flex items-center gap-1.5 rounded-full bg-brand-50 py-1 pl-3 pr-1.5 text-xs font-medium text-brand-700"
         >
-          <span class="text-brand-500">Nome:</span>
-          {{ filtroNome }}
+          <span class="text-brand-500">{{ chip.label }}:</span>
+          {{ chip.valor }}
           <button
             type="button"
             class="flex h-4 w-4 items-center justify-center rounded-full text-brand-500 transition-colors hover:bg-brand-200 hover:text-brand-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
-            aria-label="Remover filtro de nome"
-            @click="limparFiltro"
+            :aria-label="`Remover filtro de ${chip.label.toLowerCase()}`"
+            @click="chip.limpar"
           >
             <X :size="11" />
           </button>
@@ -342,7 +488,7 @@ const closeRevisionsModal = () => {
             v-if="colunasData[coluna.status].length === 0"
             class="rounded-xl border border-dashed border-ink-100 p-4 text-center text-xs text-ink-400"
           >
-            {{ filtroNome ? 'Nenhum resultado para esse filtro' : 'Arraste um card para cá' }}
+            {{ algumFiltroAtivo ? 'Nenhum resultado para esses filtros' : 'Arraste um card para cá' }}
           </p>
         </div>
       </div>
