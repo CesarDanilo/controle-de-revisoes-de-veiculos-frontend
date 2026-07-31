@@ -16,6 +16,7 @@
     "chartjs-plugin-datalabels": "^2.2.0",
     "html2canvas-pro": "^2.3.2",
     "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "tldts": "^7.4.9",
     "vue": "^3.5.39",
     "vue-chartjs": "^5.3.4",

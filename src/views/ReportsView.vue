@@ -5,11 +5,6 @@ import {
   BarChart3, Car, Users, Wrench, Calendar,
   DollarSign, Receipt, AlertCircle, RefreshCw, Download,
 } from '@lucide/vue'
-import jsPDF from 'jspdf'
-// 🔴 AQUI — usamos o fork "pro" porque o html2canvas original não sabe ler
-// cores em oklch()/lab(), que é o formato que o Tailwind v4 gera por padrão.
-// Sem isso, a captura falha silenciosamente pra qualquer elemento estilizado com Tailwind.
-import html2canvas from 'html2canvas-pro'
 import AppShell from '../components/layout/AppShell.vue'
 import EmptyState from '../components/dashboard/EmptyState.vue'
 import ReportPanel from '../components/reports/ReportPanel.vue'
@@ -28,6 +23,7 @@ import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import { useReports } from '../composables/useReports'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
+import { useReportPdf } from '../composables/useReportPdf'
 import { maskPhone } from '../utils/masks'
 
 const {
@@ -43,12 +39,18 @@ const {
   fetchAllPeople,
   fetchRevisionsByPeriod,
   fetchAvgIntervalByPerson,
+  fetchUpcomingRevisions, // 🔧 CORRIGIDO — necessário para paginar todas as páginas na exportação
 } = useReports()
 
 // 🔴 AQUI — usado apenas para salvar a edição de pessoa aberta a partir dos relatórios
 const { updatePerson } = usePeople()
 const toast = useToast()
 const route = useRoute()
+
+// 🟢 NOVO — geração de PDF vetorial (texto/tabelas reais), sem captura de
+// tela. Substitui completamente o antigo fluxo com html2canvas, que
+// quebrava (paginação capturada, componentes cortados/não renderizados).
+const { exportOverview, exportTable, exportMultiTable, exportFullReport } = useReportPdf()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
 const formatDateBR = (value) => {
@@ -163,13 +165,18 @@ const kpiTicketMedio = computed(() =>
 const formatCurrency = (value) =>
   Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-const upcomingWithStatus = computed(() => {
+// 🔧 CORRIGIDO — extraído do computed pra função pura, reaproveitada tanto
+// pela tela (paginada, 15 itens por vez) quanto pela exportação em PDF
+// (todas as páginas juntas). Antes essa lógica só existia dentro do
+// computed, então a exportação não tinha como aplicá-la aos dados
+// completos buscados via fetchAllRows.
+const buildUpcomingWithStatus = (rows) => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const in7days = new Date(today)
   in7days.setDate(today.getDate() + 7)
 
-  return data.value.upcomingRevisions
+  return rows
     .map((row) => {
       const predicted = row.predicted_date ? new Date(row.predicted_date) : null
       let status = 'normal'
@@ -185,7 +192,9 @@ const upcomingWithStatus = computed(() => {
       }
     })
     .sort((a, b) => (a._rawDate ?? Infinity) - (b._rawDate ?? Infinity))
-})
+}
+
+const upcomingWithStatus = computed(() => buildUpcomingWithStatus(data.value.upcomingRevisions))
 
 const kpiProximasRevisoes = computed(
   () => upcomingWithStatus.value.filter((r) => r.status === 'overdue' || r.status === 'soon').length
@@ -475,91 +484,296 @@ const handleVehiclesByPersonRowClick = (row) => {
 }
 
 // ---------------------------------------------------------------------
-// EXPORTAÇÃO EM PDF — client-side, com html2canvas + jsPDF
+// EXPORTAÇÃO EM PDF — agora 100% vetorial (jsPDF + autoTable), sem
+// html2canvas. Cada botão dispara um PDF diferente, todos SEM a
+// paginação de 10-em-10 da tela: buscamos TODOS os registros antes de
+// gerar o arquivo.
 // ---------------------------------------------------------------------
-const isExporting = ref(false)
-const overviewRef = ref(null) // filtros + KPIs + rankings + gráficos + próximas revisões
-const detailRef = ref(null)   // conteúdo da aba de detalhe ativa (revisões/veículos/pessoas)
 
-// Fatia um canvas alto em quantas páginas A4 forem necessárias e as adiciona ao PDF.
-// Evita imagem cortada/esticada quando o conteúdo (ex: tabela grande) é mais alto que uma página.
-const addCanvasPaginated = (pdf, canvas, margin = 10) => {
-  const pageWidth = pdf.internal.pageSize.getWidth()
-  const pageHeight = pdf.internal.pageSize.getHeight()
-  const usableWidth = pageWidth - margin * 2
-  const usableHeight = pageHeight - margin * 2
+// 🟢 NOVO — controla qual botão está "carregando" no momento (só um por
+// vez), pra desabilitar/mostrar spinner no botão certo sem afetar os outros
+const isExportingSection = ref(null)
 
-  const pxPerMm = canvas.width / usableWidth
-  const pageHeightPx = Math.floor(usableHeight * pxPerMm)
-
-  let renderedHeight = 0
-  let isFirstSlice = true
-
-  while (renderedHeight < canvas.height) {
-    const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedHeight)
-
-    const sliceCanvas = document.createElement('canvas')
-    sliceCanvas.width = canvas.width
-    sliceCanvas.height = sliceHeightPx
-    const ctx = sliceCanvas.getContext('2d')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height)
-    ctx.drawImage(canvas, 0, renderedHeight, canvas.width, sliceHeightPx, 0, 0, canvas.width, sliceHeightPx)
-
-    const imgData = sliceCanvas.toDataURL('image/png')
-    const sliceHeightMm = sliceHeightPx / pxPerMm
-
-    if (!isFirstSlice) pdf.addPage()
-    pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, sliceHeightMm)
-
-    renderedHeight += sliceHeightPx
-    isFirstSlice = false
-  }
-}
-
-const captureSection = (el) =>
-  html2canvas(el, {
-    scale: 2, // melhora nitidez do texto/gráficos no PDF
-    useCORS: true,
-    backgroundColor: '#ffffff',
-  })
-
-const exportToPDF = async () => {
-  if (isExporting.value || !overviewRef.value) return
-  isExporting.value = true
-  const originalTab = activeDetailTab.value
-
+const withExportLoading = async (key, task) => {
+  if (isExportingSection.value) return
+  isExportingSection.value = key
   try {
-    const pdf = new jsPDF('p', 'mm', 'a4')
-
-    // 1) Visão geral: filtros, KPIs, rankings, gráficos e próximas revisões
-    await nextTick()
-    const overviewCanvas = await captureSection(overviewRef.value)
-    addCanvasPaginated(pdf, overviewCanvas)
-
-    // 2) Uma seção por aba de detalhe (revisões, veículos, pessoas)
-    for (const tab of detailTabs) {
-      activeDetailTab.value = tab.key
-      await nextTick()
-      // pequena espera pra tabela/gráfico da aba renderizar de fato antes de capturar
-      await new Promise((resolve) => setTimeout(resolve, 150))
-
-      if (!detailRef.value) continue
-      const detailCanvas = await captureSection(detailRef.value)
-      pdf.addPage()
-      addCanvasPaginated(pdf, detailCanvas)
-    }
-
-    pdf.save(`relatorio-geral-${toISODate(new Date())}.pdf`)
+    await task()
   } catch (error) {
-    console.error('Erro ao gerar PDF:', error)
+    console.error(`Erro ao exportar "${key}":`, error)
     toast.error(`Não foi possível gerar o PDF: ${error?.message || 'erro desconhecido'}`)
   } finally {
-    activeDetailTab.value = originalTab
-    await nextTick()
-    isExporting.value = false
+    isExportingSection.value = null
   }
 }
+
+// 🔴 AQUI — os fetchers de useReports() são paginados (retornam só uma
+// página por vez, sobrescrevendo data.value.X). Pra exportar TODOS os
+// registros sem paginação, buscamos página por página e acumulamos aqui,
+// depois restauramos a página que o usuário estava vendo na tela. O ideal
+// a longo prazo é um endpoint dedicado no backend que devolva tudo de uma
+// vez (mais eficiente que N requisições), mas isso já resolve sem precisar
+// mexer na API agora.
+const fetchAllRows = async (fetchPage, getRows, getPagination, restorePage) => {
+  const collected = []
+  let page = 1
+
+  await fetchPage(page)
+  collected.push(...getRows())
+  const lastPage = getPagination()?.lastPage ?? 1
+
+  for (page = 2; page <= lastPage; page++) {
+    await fetchPage(page)
+    collected.push(...getRows())
+  }
+
+  if (restorePage) await fetchPage(restorePage)
+  return collected
+}
+
+const buildOverviewPayload = () => ({
+  kpis: [
+    { label: 'Revisões', value: String(kpiTotalRevisoes.value) },
+    { label: 'Veículos atendidos', value: String(kpiVeiculosAtendidos.value) },
+    { label: 'Clientes atendidos', value: String(kpiClientesAtendidos.value) },
+    { label: 'Próximas revisões (atrasadas/próx. 7 dias)', value: String(kpiProximasRevisoes.value) },
+    { label: 'Custo total', value: formatCurrency(kpiCustoTotal.value) },
+    { label: 'Ticket médio', value: formatCurrency(kpiTicketMedio.value) },
+  ],
+  brandsRanking: brandsRevisionItems.value,
+  peopleRanking: peopleRevisionItems.value,
+  genderBreakdown: [
+    ...data.value.vehiclesByGender.map((g) => ['Veículos', genderLabel(g.gender), String(g.count)]),
+    ...data.value.peopleByGender.map((g) => ['Pessoas', genderLabel(g.gender), String(g.count)]),
+  ],
+})
+
+// 1) Visão geral (KPIs + rankings + quebra por gênero)
+const exportOverviewPDF = () => withExportLoading('overview', () => {
+  exportOverview(buildOverviewPayload())
+})
+
+// 2) Próximas revisões
+// 🔧 CORRIGIDO — esse painel É paginado no backend (15 por página). O
+// código antigo exportava só `upcomingWithStatus.value` (a página atual
+// em tela), o que gerava um PDF com apenas 15 itens mesmo havendo mais
+// páginas. Agora busca TODAS as páginas via fetchAllRows — igual às
+// exportações de veículos/pessoas/revisões — aplica buildUpcomingWithStatus
+// no conjunto completo, e restaura a página que estava sendo exibida.
+const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () => {
+  const originalPage = pagination.upcomingRevisions.currentPage
+  const rawRows = await fetchAllRows(
+    (page) => fetchUpcomingRevisions(page),
+    () => data.value.upcomingRevisions,
+    () => pagination.upcomingRevisions,
+    originalPage,
+  )
+
+  exportTable({
+    title: 'Próximas revisões',
+    filenamePrefix: 'proximas-revisoes',
+    columns: [
+      { key: 'person_name', label: 'Pessoa' },
+      { key: 'vehicle', label: 'Veículo' },
+      { key: 'predicted_date_label', label: 'Previsão' },
+      { key: 'origin_label', label: 'Origem' },
+    ],
+    rows: buildUpcomingWithStatus(rawRows),
+  })
+})
+
+// 3) Revisões — combina "tempo médio entre revisões" + "revisões no período", TUDO sem paginação
+const exportRevisionsTablePDF = () => withExportLoading('revisions', async () => {
+  const originalAvgPage = pagination.avgIntervalByPerson.currentPage
+  const avgRows = await fetchAllRows(
+    (page) => fetchAvgIntervalByPerson(page),
+    () => data.value.avgIntervalByPerson,
+    () => pagination.avgIntervalByPerson,
+    originalAvgPage,
+  )
+
+  const originalPeriodPage = pagination.revisionsByPeriod.currentPage
+  const periodRows = await fetchAllRows(
+    (page) => fetchRevisionsByPeriod(periodStart.value, periodEnd.value, page),
+    () => data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) })),
+    () => pagination.revisionsByPeriod,
+    originalPeriodPage,
+  )
+
+  exportMultiTable({
+    title: 'Revisões',
+    subtitle: `Período: ${formatDateBR(periodStart.value)} a ${formatDateBR(periodEnd.value)}`,
+    filenamePrefix: 'revisoes',
+    sections: [
+      {
+        title: 'Tempo médio entre revisões (por pessoa)',
+        columns: [
+          { key: 'person_name', label: 'Pessoa' },
+          { key: 'avg_days', label: 'Média (dias)' },
+        ],
+        rows: avgRows,
+      },
+      {
+        title: 'Revisões no período selecionado',
+        columns: [
+          { key: 'date', label: 'Data' },
+          { key: 'person_name', label: 'Pessoa' },
+          { key: 'vehicle', label: 'Veículo' },
+          { key: 'description', label: 'Descrição' },
+        ],
+        rows: periodRows,
+      },
+    ],
+  })
+})
+
+// 4) Veículos — todos os registros, sem paginação
+const exportVehiclesTablePDF = () => withExportLoading('vehicles', async () => {
+  const originalPage = pagination.vehiclesByPerson.currentPage
+  const rows = await fetchAllRows(
+    (page) => fetchVehiclesByPerson(page),
+    () => data.value.vehiclesByPerson,
+    () => pagination.vehiclesByPerson,
+    originalPage,
+  )
+
+  exportTable({
+    title: 'Todos os veículos por pessoa',
+    filenamePrefix: 'veiculos',
+    columns: [
+      { key: 'person_name', label: 'Proprietário' },
+      { key: 'plate', label: 'Placa' },
+      { key: 'model', label: 'Modelo' },
+      { key: 'brand', label: 'Marca' },
+    ],
+    rows,
+  })
+})
+
+// 5) Pessoas — todos os registros, sem paginação
+const exportPeopleTablePDF = () => withExportLoading('people', async () => {
+  const originalPage = pagination.allPeople.currentPage
+  const rows = await fetchAllRows(
+    (page) => fetchAllPeople(page),
+    () => data.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) })),
+    () => pagination.allPeople,
+    originalPage,
+  )
+
+  exportTable({
+    title: 'Todas as pessoas',
+    filenamePrefix: 'pessoas',
+    columns: [
+      { key: 'name', label: 'Nome' },
+      { key: 'email', label: 'E-mail' },
+      { key: 'phone', label: 'Telefone' },
+    ],
+    rows,
+  })
+})
+
+// 6) Relatório completo — visão geral + as 4 tabelas, tudo num único PDF, sem paginação
+const exportFullReportPDF = () => withExportLoading('full', async () => {
+  const overviewPayload = buildOverviewPayload()
+
+  const originalAvgPage = pagination.avgIntervalByPerson.currentPage
+  const avgRows = await fetchAllRows(
+    (page) => fetchAvgIntervalByPerson(page),
+    () => data.value.avgIntervalByPerson,
+    () => pagination.avgIntervalByPerson,
+    originalAvgPage,
+  )
+
+  const originalPeriodPage = pagination.revisionsByPeriod.currentPage
+  const periodRows = await fetchAllRows(
+    (page) => fetchRevisionsByPeriod(periodStart.value, periodEnd.value, page),
+    () => data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) })),
+    () => pagination.revisionsByPeriod,
+    originalPeriodPage,
+  )
+
+  const originalVehiclesPage = pagination.vehiclesByPerson.currentPage
+  const vehicleRows = await fetchAllRows(
+    (page) => fetchVehiclesByPerson(page),
+    () => data.value.vehiclesByPerson,
+    () => pagination.vehiclesByPerson,
+    originalVehiclesPage,
+  )
+
+  const originalPeoplePage = pagination.allPeople.currentPage
+  const peopleRows = await fetchAllRows(
+    (page) => fetchAllPeople(page),
+    () => data.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) })),
+    () => pagination.allPeople,
+    originalPeoplePage,
+  )
+
+  exportFullReport({
+    overview: overviewPayload,
+    tables: [
+      {
+        title: 'Tempo médio entre revisões (por pessoa)',
+        columns: [
+          { key: 'person_name', label: 'Pessoa' },
+          { key: 'avg_days', label: 'Média (dias)' },
+        ],
+        rows: avgRows,
+      },
+      {
+        title: 'Revisões no período selecionado',
+        columns: [
+          { key: 'date', label: 'Data' },
+          { key: 'person_name', label: 'Pessoa' },
+          { key: 'vehicle', label: 'Veículo' },
+          { key: 'description', label: 'Descrição' },
+        ],
+        rows: periodRows,
+      },
+      {
+        title: 'Todos os veículos por pessoa',
+        columns: [
+          { key: 'person_name', label: 'Proprietário' },
+          { key: 'plate', label: 'Placa' },
+          { key: 'model', label: 'Modelo' },
+          { key: 'brand', label: 'Marca' },
+        ],
+        rows: vehicleRows,
+      },
+      {
+        title: 'Todas as pessoas',
+        columns: [
+          { key: 'name', label: 'Nome' },
+          { key: 'email', label: 'E-mail' },
+          { key: 'phone', label: 'Telefone' },
+        ],
+        rows: peopleRows,
+      },
+    ],
+  })
+})
+
+// 🟢 NOVO — qual export usar/qual chave de loading checar, de acordo com a
+// aba de detalhe ativa no momento (usado no botão da barra de abas)
+const activeTabExportHandler = computed(() => {
+  if (activeDetailTab.value === 'vehicles') return exportVehiclesTablePDF
+  if (activeDetailTab.value === 'people') return exportPeopleTablePDF
+  return exportRevisionsTablePDF
+})
+
+const activeTabExportKey = computed(() => {
+  if (activeDetailTab.value === 'vehicles') return 'vehicles'
+  if (activeDetailTab.value === 'people') return 'people'
+  return 'revisions'
+})
+
+// 🟢 NOVO — rótulo em português da aba ativa, só para exibição no botão.
+// activeTabExportKey continua em inglês porque é comparado com
+// isExportingSection (chave interna usada em withExportLoading).
+const activeTabExportLabel = computed(() => {
+  if (activeDetailTab.value === 'vehicles') return 'Veículos'
+  if (activeDetailTab.value === 'people') return 'Pessoas'
+  return 'Revisões'
+})
 // --- fim exportação PDF ---
 
 onMounted(loadAll)
@@ -572,12 +786,12 @@ onMounted(loadAll)
         v-if="!isLoading && hasAnyData"
         type="button"
         class="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-        :disabled="isExporting"
-        @click="exportToPDF"
+        :disabled="isExportingSection === 'full'"
+        @click="exportFullReportPDF"
       >
-        <RefreshCw v-if="isExporting" :size="16" class="animate-spin" />
+        <RefreshCw v-if="isExportingSection === 'full'" :size="16" class="animate-spin" />
         <Download v-else :size="16" />
-        {{ isExporting ? 'Gerando PDF...' : 'Exportar PDF' }}
+        {{ isExportingSection === 'full' ? 'Gerando PDF...' : 'Exportar relatório completo' }}
       </button>
     </template>
 
@@ -608,38 +822,52 @@ onMounted(loadAll)
     />
 
     <template v-else>
-      <div ref="overviewRef">
-        <!-- ====== FILTROS RÁPIDOS ====== -->
-        <div class="mb-6 flex flex-wrap items-center gap-2" role="group" aria-label="Período do relatório">
-          <button
-            v-for="preset in PRESETS"
-            :key="preset.key"
-            type="button"
-            class="rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
-            :class="
-              activePreset === preset.key
-                ? 'bg-brand-600 text-white'
-                : 'border border-ink-200 bg-white text-ink-600 hover:bg-ink-50'
-            "
-            :aria-pressed="activePreset === preset.key"
-            @click="applyPreset(preset)"
-          >
-            {{ preset.label }}
-          </button>
-
-          <template v-if="activePreset === 'custom'">
-            <input v-model="periodStart" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data inicial" />
-            <span class="text-xs text-ink-400">até</span>
-            <input v-model="periodEnd" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data final" />
+      <div>
+        <!-- ====== FILTROS RÁPIDOS + EXPORTAR VISÃO GERAL ====== -->
+        <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Período do relatório">
             <button
+              v-for="preset in PRESETS"
+              :key="preset.key"
               type="button"
-              class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
-              @click="applyCustomPeriod"
+              class="rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
+              :class="
+                activePreset === preset.key
+                  ? 'bg-brand-600 text-white'
+                  : 'border border-ink-200 bg-white text-ink-600 hover:bg-ink-50'
+              "
+              :aria-pressed="activePreset === preset.key"
+              @click="applyPreset(preset)"
             >
-              <Calendar :size="13" />
-              Aplicar
+              {{ preset.label }}
             </button>
-          </template>
+
+            <template v-if="activePreset === 'custom'">
+              <input v-model="periodStart" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data inicial" />
+              <span class="text-xs text-ink-400">até</span>
+              <input v-model="periodEnd" type="date" class="rounded-lg border border-ink-200 px-3 py-1.5 text-xs" aria-label="Data final" />
+              <button
+                type="button"
+                class="flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
+                @click="applyCustomPeriod"
+              >
+                <Calendar :size="13" />
+                Aplicar
+              </button>
+            </template>
+          </div>
+
+          <!-- 🟢 NOVO — exporta só KPIs + rankings + quebra por gênero -->
+          <button
+            type="button"
+            class="flex shrink-0 items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            :disabled="isExportingSection === 'overview'"
+            @click="exportOverviewPDF"
+          >
+            <RefreshCw v-if="isExportingSection === 'overview'" :size="13" class="animate-spin" />
+            <Download v-else :size="13" />
+            {{ isExportingSection === 'overview' ? 'Gerando...' : 'Baixar visão geral (PDF)' }}
+          </button>
         </div>
 
         <!-- ====== KPIs ====== -->
@@ -704,6 +932,18 @@ onMounted(loadAll)
           description="Valor informado no cadastro ou, na ausência dele, estimativa com base no histórico do veículo."
           class="mb-8 scroll-mt-6"
         >
+          <div class="mb-3 flex justify-end">
+            <button
+              type="button"
+              class="flex items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              :disabled="isExportingSection === 'upcoming'"
+              @click="exportUpcomingRevisionsPDF"
+            >
+              <RefreshCw v-if="isExportingSection === 'upcoming'" :size="13" class="animate-spin" />
+              <Download v-else :size="13" />
+              {{ isExportingSection === 'upcoming' ? 'Gerando...' : 'Baixar PDF' }}
+            </button>
+          </div>
           <UpcomingRevisionsPanel :items="upcomingWithStatus" />
         </ReportPanel>
       </div>
@@ -714,26 +954,41 @@ onMounted(loadAll)
            Eles apontam pra "#aba-pessoas" / "#aba-veiculos", que trocam
            activeDetailTab (ver TAB_HASH_MAP) e então rolam pra cá. -->
       <div id="secao-detalhes" class="scroll-mt-6">
-        <div class="mb-4 flex gap-2 border-b border-ink-100">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-ink-100">
+          <div class="flex gap-2">
+            <button
+              v-for="tab in detailTabs"
+              :key="tab.key"
+              type="button"
+              class="flex items-center gap-2 border-b-2 px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
+              :class="
+                activeDetailTab === tab.key
+                  ? 'border-brand-600 text-brand-600'
+                  : 'border-transparent text-ink-400 hover:text-ink-700'
+              "
+              :aria-pressed="activeDetailTab === tab.key"
+              @click="activeDetailTab = tab.key"
+            >
+              <component :is="tab.icon" :size="15" />
+              {{ tab.label }}
+            </button>
+          </div>
+
+          <!-- 🟢 NOVO — exporta a aba de detalhe ativa no momento, com TODOS
+               os registros (sem a paginação de 10-em-10 da tabela na tela) -->
           <button
-            v-for="tab in detailTabs"
-            :key="tab.key"
             type="button"
-            class="flex items-center gap-2 border-b-2 px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1"
-            :class="
-              activeDetailTab === tab.key
-                ? 'border-brand-600 text-brand-600'
-                : 'border-transparent text-ink-400 hover:text-ink-700'
-            "
-            :aria-pressed="activeDetailTab === tab.key"
-            @click="activeDetailTab = tab.key"
+            class="mb-2 flex shrink-0 items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            :disabled="isExportingSection === activeTabExportKey"
+            @click="activeTabExportHandler()"
           >
-            <component :is="tab.icon" :size="15" />
-            {{ tab.label }}
+            <RefreshCw v-if="isExportingSection === activeTabExportKey" :size="13" class="animate-spin" />
+            <Download v-else :size="13" />
+            {{ isExportingSection === activeTabExportKey ? 'Gerando...' : 'Baixar PDF - ' + activeTabExportLabel }}
           </button>
         </div>
 
-        <div ref="detailRef">
+        <div>
           <div v-if="activeDetailTab === 'revisions'" class="flex flex-col gap-6">
             <ReportPanel title="Tempo médio entre revisões" description="Média de dias entre visitas, por pessoa (considerando todos os veículos dela)">
               <ReportTable
