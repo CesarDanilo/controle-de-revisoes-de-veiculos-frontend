@@ -582,6 +582,34 @@ const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () 
   })
 })
 
+// 2b) Revisões no período selecionado — tabela isolada, com TODOS os
+// registros do período filtrado (sem a paginação de 10-em-10 da tela).
+// 🟢 NOVO — antes essa tabela só saía combinada dentro do PDF de
+// "Revisões" (botão da barra de abas, exportRevisionsTablePDF, que junta
+// intervalo médio + período). Este botão exporta só ela, isolada, igual
+// ao padrão do card "Próximas revisões".
+const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', async () => {
+  const originalPeriodPage = pagination.revisionsByPeriod.currentPage
+  const periodRows = await fetchAllRows(
+    (page) => fetchRevisionsByPeriod(periodStart.value, periodEnd.value, page),
+    () => data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) })),
+    () => pagination.revisionsByPeriod,
+    originalPeriodPage,
+  )
+
+  exportTable({
+    title: 'Revisões no período selecionado',
+    filenamePrefix: 'revisoes-periodo',
+    columns: [
+      { key: 'date', label: 'Data' },
+      { key: 'person_name', label: 'Pessoa' },
+      { key: 'vehicle', label: 'Veículo' },
+      { key: 'description', label: 'Descrição' },
+    ],
+    rows: periodRows,
+  })
+})
+
 // 3) Revisões — combina "tempo médio entre revisões" + "revisões no período", TUDO sem paginação
 const exportRevisionsTablePDF = () => withExportLoading('revisions', async () => {
   const originalAvgPage = pagination.avgIntervalByPerson.currentPage
@@ -1006,6 +1034,18 @@ onMounted(loadAll)
             </ReportPanel>
 
             <ReportPanel title="Revisões no período selecionado">
+              <div class="mb-3 flex justify-end">
+                <button
+                  type="button"
+                  class="flex items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                  :disabled="isExportingSection === 'periodRevisions'"
+                  @click="exportRevisionsByPeriodPDF"
+                >
+                  <RefreshCw v-if="isExportingSection === 'periodRevisions'" :size="13" class="animate-spin" />
+                  <Download v-else :size="13" />
+                  {{ isExportingSection === 'periodRevisions' ? 'Gerando...' : 'Baixar PDF' }}
+                </button>
+              </div>
               <p v-if="!revisionsByPeriodFormatted.length" class="py-6 text-center text-sm text-ink-400">
                 Nenhuma revisão encontrada nesse período.
               </p>
