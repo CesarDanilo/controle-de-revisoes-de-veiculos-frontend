@@ -11,6 +11,7 @@ const props = defineProps({
   emptyText: { type: String, default: 'Nenhum resultado encontrado.' },
   loading: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
+  searchMaxLength: { type: Number, default: 30 },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -33,6 +34,10 @@ const filteredOptions = computed(() => {
 })
 
 const isDisabled = computed(() => props.disabled || props.loading)
+
+const remainingChars = computed(() => props.searchMaxLength - searchTerm.value.length)
+const isNearLimit = computed(() => remainingChars.value <= 5)
+const isAtLimit = computed(() => remainingChars.value <= 0)
 
 async function openDropdown() {
   if (isDisabled.value) return
@@ -113,13 +118,23 @@ watch(isOpen, (open) => {
     >
       <div class="flex items-center gap-2 border-b border-surface-border px-3 py-2">
         <Search :size="14" class="shrink-0 text-ink-400" />
-        <input
-          ref="searchInputRef"
-          v-model="searchTerm"
-          type="text"
-          :placeholder="searchPlaceholder"
-          class="w-full text-sm text-ink-900 outline-none placeholder:text-ink-400"
-        />
+        <div class="relative flex-1">
+          <input
+            ref="searchInputRef"
+            v-model="searchTerm"
+            type="text"
+            :maxlength="searchMaxLength"
+            :placeholder="searchPlaceholder"
+            class="w-full text-sm text-ink-900 outline-none placeholder:text-ink-400"
+          />
+          <span
+            v-if="searchTerm.length > 0"
+            class="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 select-none text-[11px] tabular-nums transition-colors"
+            :class="isAtLimit ? 'text-red-500' : isNearLimit ? 'text-amber-500' : 'text-ink-300'"
+          >
+            {{ searchTerm.length }}/{{ searchMaxLength }}
+          </span>
+        </div>
       </div>
 
       <ul :id="listboxId" role="listbox" class="max-h-48 overflow-y-auto py-1">

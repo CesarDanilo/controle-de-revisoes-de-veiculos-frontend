@@ -703,6 +703,7 @@ const handleLicensePlatePaste = (event) => {
               placeholder="Selecione"
               search-placeholder="Pesquisar marca..."
               empty-text="Nenhuma marca encontrada."
+              search-max-length=30
             />
 
             <div v-else class="flex flex-col gap-1">
