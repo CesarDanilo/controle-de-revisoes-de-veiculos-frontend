@@ -342,6 +342,43 @@ const saveNewColor = async () => {
 }
 // ------------------------------------------------------------
 
+// 🔴 NOVO — traduz mensagens conhecidas que o Laravel devolve em inglês
+// dentro de `errors.<campo>`. Adicione outros `includes` aqui conforme
+// surgirem novos casos (ex: marca/cor duplicada retornando do backend).
+const translateVehicleFieldMessage = (message) => {
+  if (!message) return null
+
+  const normalized = message.toLowerCase()
+
+  if (normalized.includes('license plate') && normalized.includes('already been taken')) {
+    return 'Já existe um veículo com essa placa!'
+  }
+
+  return message
+}
+
+// 🔴 NOVO — trata o erro de submit (create/update) de forma unificada:
+// 1) Se for erro de validação (422) com o objeto `errors` do Laravel,
+//    preenche `fieldErrors` (mostra a mensagem embaixo do campo certo,
+//    ex: Placa) e retorna a primeira mensagem já traduzida pro toast.
+// 2) Caso contrário, cai no fallback genérico de sempre.
+const applyBackendValidationErrors = (error) => {
+  const backendErrors = error.response?.data?.errors
+
+  if (error.response?.status === 422 && backendErrors && Object.keys(backendErrors).length) {
+    // Laravel manda um array de mensagens por campo — pegamos a primeira de cada.
+    fieldErrors.value = Object.fromEntries(
+      Object.entries(backendErrors).map(([field, messages]) => [field, [translateVehicleFieldMessage(messages[0])]])
+    )
+
+    const firstField = Object.keys(backendErrors)[0]
+    return translateVehicleFieldMessage(backendErrors[firstField][0])
+  }
+
+  const rawMessage = error.response?.data?.message ?? error.response?.data?.error
+  return translateVehicleFieldMessage(rawMessage) ?? 'Não foi possível salvar o veículo.'
+}
+
 const handleSubmit = async () => {
   const result = vehicleSchema.safeParse(form)
 
@@ -374,8 +411,11 @@ const handleSubmit = async () => {
       toast.success('Veículo atualizado com sucesso!')
       resetForm() // 🔴 AQUI — limpa e volta pro modo criação, mas o painel continua aberto
     } catch (error) {
-      const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar o veículo.'
-      toast.error(message)
+      // 🔴 CORRIGIDO — antes lia só `data.message`, que no erro de validação (422) do
+      // Laravel é sempre o texto genérico "The given data was invalid." em inglês. A
+      // mensagem específica ("The license plate has already been taken.") fica dentro
+      // de `data.errors.license_plate`, então o toast nunca mostrava a mensagem certa.
+      toast.error(applyBackendValidationErrors(error))
     } finally {
       isSubmitting.value = false
     }
@@ -392,12 +432,11 @@ const handleSubmit = async () => {
     toast.success('Veículo cadastrado com sucesso!')
     resetForm() // 🔴 AQUI — limpa o formulário, mas o painel continua aberto pra um novo cadastro
   } catch (error) {
-    const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar o veículo.'
-    if(message == "The license plate has already been taken.") {
-      toast.error("Já existe um veículo com essa placa!")
-    }else{
-      toast.error(message)
-    }
+    // 🔴 CORRIGIDO — mesma causa do bloco de edição: a comparação exata com
+    // `data.message` nunca batia com o erro real de validação (422), que vem
+    // dentro de `data.errors`. Agora usa o mesmo helper, que já traduz e também
+    // preenche `fieldErrors.license_plate` pra aparecer embaixo do campo Placa.
+    toast.error(applyBackendValidationErrors(error))
   } finally {
     isSubmitting.value = false
   }

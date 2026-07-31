@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useQueryClient } from '@tanstack/vue-query'
 import { Trash2, RotateCcw, User, Car, Wrench, X, ChevronLeft, ChevronRight, Search } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import EmptyState from '../components/dashboard/EmptyState.vue'
@@ -21,6 +22,31 @@ const {
 } = useLixeira()
 
 const toast = useToast()
+
+// 🟢 NOVO — acesso direto ao cache do Vue Query. Como `usePeople` (e,
+// presumivelmente, os composables de veículo/revisão) usam `useQuery`
+// com chaves como ['people', ...], invalidar essas chaves aqui faz
+// o Vue Query refazer o fetch automaticamente em QUALQUER tela que
+// esteja usando esses dados — mesmo que a página de Proprietários
+// esteja em segundo plano (keep-alive) ou seja remontada depois.
+const queryClient = useQueryClient()
+
+// 🟢 NOVO — mapeia o tipo do item da lixeira pra query key correspondente.
+// Ajuste 'vehicle'/'revisions' aqui se os composables de veículo e revisão
+// usarem chaves diferentes de ['vehicles'] / ['revisions'] (ex: se o
+// useVehicles.js usar queryKey: ['vehicle', ...] no singular, troque abaixo).
+const QUERY_KEY_BY_TIPO = {
+  people: ['people'],
+  vehicle: ['vehicles'],
+  revisions: ['revisions'],
+}
+
+const invalidarListaRelacionada = (item) => {
+  const queryKey = QUERY_KEY_BY_TIPO[item.tabela_origem]
+  if (queryKey) {
+    queryClient.invalidateQueries({ queryKey })
+  }
+}
 
 const restaurandoId = ref(null)
 const excluindoId = ref(null)
@@ -118,6 +144,8 @@ const restaurar = async (item) => {
   try {
     await restaurarItem(item.id)
     toast.success(`${nomeFor(item.tabela_origem)} restaurado com sucesso!`)
+    invalidarListaRelacionada(item) // 🟢 NOVO — recarrega a lista correspondente (ex: Proprietários)
+    await carregarComFiltros(currentPage.value) // recarrega a própria lixeira, já sem o item restaurado
   } catch (error) {
     if (error.response?.status === 410) {
       toast.error('Este item expirou e não pode mais ser restaurado.')
@@ -147,6 +175,7 @@ const confirmarExclusao = async () => {
     await excluirPermanentemente(itemParaExcluir.value.id)
     toast.success('Item excluído permanentemente.')
     closeConfirm()
+    await carregarComFiltros(currentPage.value) // recarrega a lixeira, já sem o item excluído
   } catch (error) {
     toast.error('Não foi possível excluir este item.')
   } finally {
