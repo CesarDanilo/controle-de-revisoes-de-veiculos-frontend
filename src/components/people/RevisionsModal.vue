@@ -62,7 +62,7 @@ const MAX_YEARS_AHEAD = 5
 // isso por uma chamada de API, se preferir manter uma fonte única de verdade).
 const STATUS_OPTIONS = [
   { value: 'aberto', label: 'Aberto' },
-  { value: 'em_andamento', label: 'Em andamento' },
+  { value: 'em_andamento', label: 'Andamento' },
   { value: 'aguardando_pagamento', label: 'Aguardando pagamento' },
   { value: 'concluido', label: 'Concluído' },
   { value: 'cancelado', label: 'Cancelado' },
