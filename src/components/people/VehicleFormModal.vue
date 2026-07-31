@@ -4,6 +4,7 @@ import { Car, Palette, Calendar, Hash, Plus, X, Pencil, Trash2, Tag, Loader2 } f
 import BaseModal from '../ui/BaseModal.vue'
 import BaseInput from '../ui/BaseInput.vue'
 import BaseButton from '../ui/BaseButton.vue'
+import BaseSearchSelect from '../ui/BaseSearchSelect.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
 import { vehicleSchema } from '../../schemas/vehicle.schema'
 import { brandService } from '../../services/brand.service'
@@ -668,17 +669,17 @@ const handleLicensePlatePaste = (event) => {
               </button>
             </div>
 
-            <select
+            <!-- 🔴 AQUI — select nativo trocado por BaseSearchSelect (mesma v-model, mesmas opções) -->
+            <BaseSearchSelect
               v-if="!isCreatingBrand"
               v-model="form.brand_id"
-              class="rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              :disabled="isLoadingBrands"
-            >
-              <option value="" disabled>{{ isLoadingBrands ? 'Carregando...' : 'Selecione' }}</option>
-              <option v-for="brand in brands" :key="brand.id" :value="brand.id">
-                {{ brand.name }}
-              </option>
-            </select>
+              :options="brands"
+              :loading="isLoadingBrands"
+              loading-text="Carregando..."
+              placeholder="Selecione"
+              search-placeholder="Pesquisar marca..."
+              empty-text="Nenhuma marca encontrada."
+            />
 
             <div v-else class="flex flex-col gap-1">
               <div class="flex items-center gap-2">
@@ -687,7 +688,7 @@ const handleLicensePlatePaste = (event) => {
                   v-model="newBrandName"
                   type="text"
                   placeholder="Nome da marca"
-                  class="flex-1 rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  class="flex-1 rounded-xl border border-surface-border bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                   :maxlength="BRAND_NAME_MAX_LENGTH"
                   @keydown.enter="saveNewBrand"
                   @keydown="handleBrandNameKeydown"
@@ -695,7 +696,7 @@ const handleLicensePlatePaste = (event) => {
                 />
                 <button
                   type="button"
-                  class="shrink-0 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  class="shrink-0 rounded-xl bg-brand-600 px-3 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
                   :disabled="isSavingBrand || !newBrandName.trim()"
                   @click="saveNewBrand"
                 >
@@ -703,7 +704,7 @@ const handleLicensePlatePaste = (event) => {
                 </button>
                 <button
                   type="button"
-                  class="shrink-0 rounded-xl p-2 text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700"
+                  class="shrink-0 rounded-xl p-2.5 text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700"
                   aria-label="Cancelar"
                   :disabled="isSavingBrand"
                   @click="cancelBrandCreation"
@@ -775,17 +776,17 @@ const handleLicensePlatePaste = (event) => {
                 </button>
               </div>
 
-              <select
+              <!-- 🔴 AQUI — select nativo trocado por BaseSearchSelect (mesma v-model, mesma lista ordenada) -->
+              <BaseSearchSelect
                 v-if="!isCreatingColor"
                 v-model="form.color_id"
-                class="rounded-xl border border-surface-border bg-white px-3 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                :disabled="isLoadingColors"
-              >
-                <option value="" disabled>{{ isLoadingColors ? 'Carregando...' : 'Selecione' }}</option>
-                <option v-for="color in sortedColors" :key="color.id" :value="color.id">
-                  {{ color.name }}
-                </option>
-              </select>
+                :options="sortedColors"
+                :loading="isLoadingColors"
+                loading-text="Carregando..."
+                placeholder="Selecione"
+                search-placeholder="Pesquisar cor..."
+                empty-text="Nenhuma cor encontrada."
+              />
 
               <div v-else class="flex flex-col gap-1">
                 <div class="flex items-center gap-1.5">
@@ -794,7 +795,7 @@ const handleLicensePlatePaste = (event) => {
                     v-model="newColorName"
                     type="text"
                     placeholder="Nome da cor"
-                    class="min-w-0 flex-1 rounded-xl border border-surface-border bg-white px-2 py-2 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    class="min-w-0 flex-1 rounded-xl border border-surface-border bg-white px-2 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
                     :maxlength="COLOR_NAME_MAX_LENGTH"
                     @keydown.enter="saveNewColor"
                     @keydown="handleColorNameKeydown"
@@ -802,7 +803,7 @@ const handleLicensePlatePaste = (event) => {
                   />
                   <button
                     type="button"
-                    class="shrink-0 rounded-xl bg-brand-600 p-2 text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    class="shrink-0 rounded-xl bg-brand-600 p-2.5 text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
                     aria-label="Salvar cor"
                     :disabled="isSavingColor || !newColorName.trim()"
                     @click="saveNewColor"
@@ -812,7 +813,7 @@ const handleLicensePlatePaste = (event) => {
                   </button>
                   <button
                     type="button"
-                    class="shrink-0 rounded-xl p-2 text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700"
+                    class="shrink-0 rounded-xl p-2.5 text-ink-400 transition-colors hover:bg-ink-50 hover:text-ink-700"
                     aria-label="Cancelar"
                     :disabled="isSavingColor"
                     @click="cancelColorCreation"
