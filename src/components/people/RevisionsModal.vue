@@ -31,6 +31,11 @@ const editingRevisionId = ref(null)
 const isSubmitting = ref(false)
 const formError = ref('') // erros gerais/backend, não ligados a um campo específico
 
+// 🔴 AQUI — texto fixo (descrição + data) da revisão sendo editada, capturado
+// no momento em que o "Editar" é clicado. Não muda enquanto o usuário digita
+// no formulário — serve só como referência visual de "qual revisão é essa".
+const editingRevisionLabel = ref('')
+
 // 🔴 AQUI — mapa de refs (uma por veículo), porque uma ref com nome fixo
 // dentro de um v-for é tratada pelo Vue como ARRAY, não como elemento único —
 // era por isso que o .focus() não funcionava antes
@@ -186,6 +191,17 @@ const isOverdue = (dateStr) => {
 
 const sortRevisions = (list) =>
   [...list].sort((a, b) => new Date(b.revision_date) - new Date(a.revision_date))
+
+// 🔴 AQUI — retorna a lista de revisões do veículo já excluindo (visualmente)
+// a que está sendo editada nesse momento, pra não duplicar informação com o
+// formulário logo acima. Não altera revisionsByVehicle — só filtra pra exibição.
+const visibleRevisions = (vehicleId) => {
+  const list = revisionsByVehicle[vehicleId] || []
+  if (formMode.value === 'edit' && openFormVehicleId.value === vehicleId && editingRevisionId.value) {
+    return list.filter((r) => r.id !== editingRevisionId.value)
+  }
+  return list
+}
 
 // ---------- máscara de KM com separador de milhar, com limite ----------
 const MAX_KM_DIGITS = 7 // permite até 9.999.999 km
@@ -470,6 +486,7 @@ const toggleForm = (vehicleId) => {
   openFormVehicleId.value = vehicleId
   formMode.value = 'create'
   editingRevisionId.value = null
+  editingRevisionLabel.value = '' // 🔴 AQUI
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
   originalSnapshot.value = null
@@ -483,6 +500,9 @@ const startEdit = (vehicleId, revision) => {
   openFormVehicleId.value = vehicleId
   formMode.value = 'edit'
   editingRevisionId.value = revision.id
+  // 🔴 AQUI — captura a referência fixa (descrição + data) ANTES de qualquer
+  // edição, pra servir de "etiqueta" estável no topo do formulário
+  editingRevisionLabel.value = `${revision.description || 'Revisão sem descrição'} · ${formatDate(revision.revision_date)}`
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
   Object.assign(formData, {
@@ -515,6 +535,7 @@ const closeForm = () => {
   openFormVehicleId.value = null
   formMode.value = 'create'
   editingRevisionId.value = null
+  editingRevisionLabel.value = '' // 🔴 AQUI
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
   originalSnapshot.value = null
@@ -816,15 +837,26 @@ onMounted(async () => {
             <form
               v-if="openFormVehicleId === vehicle.id"
               :ref="setFormRef(vehicle.id)"
-              class="mb-3 border-b border-ink-100 pb-3"
+              class="mb-3 border-b border-ink-100 pb-3 bg-amber-50/50"
               @submit.prevent="submitRevision(vehicle)"
             >
-              <div class="mb-3 flex items-center justify-between">
-                <p class="flex items-center gap-1.5 text-xs font-semibold text-ink-900">
-                  <component :is="formMode === 'edit' ? Pencil : Plus" :size="13" />
-                  {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
-                </p>
-                <p class="text-[11px] text-ink-400">
+              <div class="mb-3 flex items-start justify-between gap-2">
+                <div class="flex min-w-0 flex-col gap-1">
+                  <p class="flex items-center gap-1.5 text-xs font-semibold text-ink-900">
+                    <component :is="formMode === 'edit' ? Pencil : Plus" :size="13" />
+                    {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
+                  </p>
+                  <!-- 🔴 AQUI — referência fixa da revisão em edição, pra deixar
+                       claro qual delas está sendo alterada, já que a linha
+                       original some da lista abaixo enquanto isso -->
+                  <p
+                    v-if="formMode === 'edit' && editingRevisionLabel"
+                    class="w-fit truncate rounded-md bg-ink-100 px-2 py-1 text-[11px] font-medium text-orange-600"
+                  >
+                    {{ editingRevisionLabel }}
+                  </p>
+                </div>
+                <p class="shrink-0 text-[11px] text-ink-400">
                   <span class="text-red-500">*</span> obrigatório
                 </p>
               </div>
@@ -1010,19 +1042,23 @@ onMounted(async () => {
             </form>
           </Transition>
 
-          <!-- Sem revisões: mesma mensagem em ambos os layouts -->
+          <!-- Sem revisões (ou a única revisão está sendo editada acima) -->
           <div
-            v-if="!revisionsByVehicle[vehicle.id]?.length"
+            v-if="!visibleRevisions(vehicle.id).length"
             class="rounded-xl border border-ink-100 px-3 py-4 text-center text-xs text-ink-400"
           >
-            Nenhuma revisão registrada.
+            {{
+              formMode === 'edit' && openFormVehicleId === vehicle.id && revisionsByVehicle[vehicle.id]?.length
+                ? 'A revisão em edição está referenciada acima.'
+                : 'Nenhuma revisão registrada.'
+            }}
           </div>
 
           <template v-else>
             <!-- ===== MOBILE (< sm): lista de cards em vez de tabela ===== -->
             <div class="flex flex-col gap-2 sm:hidden">
               <div
-                v-for="revision in revisionsByVehicle[vehicle.id]"
+                v-for="revision in visibleRevisions(vehicle.id)"
                 :key="revision.id"
                 class="rounded-xl border border-ink-100 p-3 text-xs"
                 :class="editingRevisionId === revision.id ? 'bg-ink-50' : 'bg-white'"
@@ -1118,7 +1154,7 @@ onMounted(async () => {
                 </thead>
                 <tbody class="divide-y divide-ink-100">
                   <tr
-                    v-for="revision in revisionsByVehicle[vehicle.id]"
+                    v-for="revision in visibleRevisions(vehicle.id)"
                     :key="revision.id"
                     class="text-ink-700"
                     :class="editingRevisionId === revision.id ? 'bg-ink-50' : ''"
