@@ -63,7 +63,7 @@ const MAX_YEARS_AHEAD = 5
 const STATUS_OPTIONS = [
   { value: 'aberto', label: 'Aberto' },
   { value: 'em_andamento', label: 'Andamento' },
-  { value: 'aguardando_pagamento', label: 'Aguardando pagamento' },
+  { value: 'aguardando_pagamento', label: 'Agr.Pagamento' },
   { value: 'concluido', label: 'Concluído' },
   { value: 'cancelado', label: 'Cancelado' },
 ]
