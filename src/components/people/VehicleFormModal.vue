@@ -21,6 +21,9 @@ const emit = defineEmits(['close'])
 
 const toast = useToast()
 
+// 🔴 AQUI — controla se o painel de cadastro/edição está expandido; por padrão, começa fechado (só a lista)
+const isFormOpen = ref(false)
+
 const emptyForm = () => ({
   model: '',
   year: '',
@@ -133,6 +136,18 @@ const resetForm = () => {
   fieldErrors.value = {}
 }
 
+// 🔴 AQUI — abre o painel já pronto pra um novo cadastro
+const openCreateForm = () => {
+  resetForm()
+  isFormOpen.value = true
+}
+
+// 🔴 AQUI — fecha o painel e volta pra listagem, limpando qualquer edição/criação em andamento
+const closeForm = () => {
+  resetForm()
+  isFormOpen.value = false
+}
+
 const selectForEdit = (vehicle) => {
   form.model = vehicle.model
   form.year = String(vehicle.year)
@@ -142,6 +157,7 @@ const selectForEdit = (vehicle) => {
   form.people_id = props.person.id
   editingVehicleId.value = vehicle.id
   fieldErrors.value = {}
+  isFormOpen.value = true // 🔴 AQUI — editar sempre expande o painel
 
   // normaliza o estado original pelo mesmo schema, pra comparar "de igual pra igual" depois
   const parsed = vehicleSchema.safeParse(form)
@@ -356,7 +372,7 @@ const handleSubmit = async () => {
       const index = vehicles.value.findIndex((v) => v.id === editingVehicleId.value)
       if (index !== -1) vehicles.value[index] = updated
       toast.success('Veículo atualizado com sucesso!')
-      resetForm()
+      resetForm() // 🔴 AQUI — limpa e volta pro modo criação, mas o painel continua aberto
     } catch (error) {
       const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar o veículo.'
       toast.error(message)
@@ -374,7 +390,7 @@ const handleSubmit = async () => {
     const created = await vehicleService.create(payload)
     vehicles.value.unshift(created)
     toast.success('Veículo cadastrado com sucesso!')
-    resetForm()
+    resetForm() // 🔴 AQUI — limpa o formulário, mas o painel continua aberto pra um novo cadastro
   } catch (error) {
     const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível salvar o veículo.'
     if(message == "The license plate has already been taken.") {
@@ -588,12 +604,17 @@ const handleLicensePlatePaste = (event) => {
 
 <template>
   <BaseModal :title="`Veículos de ${person.name}`" size="xl" @close="emit('close')">
-    <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+    <div class="grid grid-cols-1 gap-6" :class="isFormOpen ? 'md:grid-cols-2' : ''">
       <div class="flex flex-col gap-3">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-semibold text-ink-700">
             {{ isLoadingVehicles ? 'Carregando...' : `${vehicles.length} veículo(s)` }}
           </h3>
+          <!-- 🔴 AQUI — botão só aparece com a lista sozinha (painel fechado) -->
+          <BaseButton v-if="!isFormOpen" type="button" @click="openCreateForm">
+            <Plus :size="16" />
+            Adicionar veículo
+          </BaseButton>
         </div>
 
         <div v-if="isLoadingVehicles" class="py-8 text-center text-sm text-ink-500">
@@ -646,7 +667,11 @@ const handleLicensePlatePaste = (event) => {
         </div>
       </div>
 
-      <div class="flex flex-col gap-4 border-t border-surface-border pt-6 md:border-l md:border-t-0 md:pl-6 md:pt-0">
+      <!-- 🔴 AQUI — painel de cadastro/edição só é renderizado quando isFormOpen é true -->
+      <div
+        v-if="isFormOpen"
+        class="flex flex-col gap-4 border-t border-surface-border pt-6 md:border-l md:border-t-0 md:pl-6 md:pt-0"
+      >
         <div class="flex items-center gap-2">
           <Tag :size="14" class="text-brand-600" />
           <h3 class="text-sm font-semibold text-ink-700">
@@ -669,7 +694,6 @@ const handleLicensePlatePaste = (event) => {
               </button>
             </div>
 
-            <!-- 🔴 AQUI — select nativo trocado por BaseSearchSelect (mesma v-model, mesmas opções) -->
             <BaseSearchSelect
               v-if="!isCreatingBrand"
               v-model="form.brand_id"
@@ -712,7 +736,6 @@ const handleLicensePlatePaste = (event) => {
                   <X :size="16" />
                 </button>
               </div>
-              <!-- 🔴 AQUI — contador de caracteres do nome da marca -->
               <span
                 class="self-end text-xs"
                 :class="brandNameCharCount >= BRAND_NAME_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
@@ -737,7 +760,6 @@ const handleLicensePlatePaste = (event) => {
             <div class="flex items-center justify-between">
               <span v-if="fieldErrors.model" class="text-xs text-red-600">{{ fieldErrors.model[0] }}</span>
               <span v-else></span>
-              <!-- 🔴 AQUI — contador de caracteres do modelo -->
               <span
                 class="text-xs"
                 :class="modelCharCount >= MODEL_MAX_LENGTH ? 'text-red-500' : 'text-ink-400'"
@@ -776,7 +798,6 @@ const handleLicensePlatePaste = (event) => {
                 </button>
               </div>
 
-              <!-- 🔴 AQUI — select nativo trocado por BaseSearchSelect (mesma v-model, mesma lista ordenada) -->
               <BaseSearchSelect
                 v-if="!isCreatingColor"
                 v-model="form.color_id"
@@ -847,8 +868,9 @@ const handleLicensePlatePaste = (event) => {
           </div>
 
           <div class="mt-2 flex justify-end gap-3">
-            <BaseButton v-if="isEditing" type="button" variant="ghost" @click="resetForm">
-              Cancelar edição
+            <!-- 🔴 AQUI — sempre visível com o painel aberto, tanto em criação quanto edição -->
+            <BaseButton type="button" variant="ghost" @click="closeForm">
+              {{ isEditing ? 'Cancelar edição' : 'Cancelar' }}
             </BaseButton>
             <BaseButton type="submit" :disabled="isSubmitting || isUnchanged">
               {{ isSubmitting ? 'Salvando...' : isEditing ? 'Salvar alterações' : 'Cadastrar' }}
