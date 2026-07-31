@@ -69,7 +69,7 @@ export function useEmailValidation() {
       console.log('[useEmailValidation] status final:', status.value, '| message:', message.value)
     } catch (err) {
       status.value = 'error'
-      message.value = 'Não foi possível verificar o e-mail agora. Tente novamente.'
+      message.value = 'Serviço de verificação de e-mail está indisponível no momento. Tente novamente mais tarde.'
       lastCheckedEmail.value = ''
       console.error('[useEmailValidation] ERRO ao validar email:', err)
       console.error('[useEmailValidation] err.response:', err?.response)

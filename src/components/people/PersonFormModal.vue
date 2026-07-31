@@ -659,7 +659,7 @@ const emailCharCount = computed(() => form.email.length)
           <span v-if="fieldErrors.email" class="text-xs text-red-600">{{ fieldErrors.email[0] }}</span>
           <span v-else-if="emailStatus === 'checking'" class="text-xs text-ink-400">Verificando e-mail...</span>
           <span v-else-if="emailStatus === 'invalid'" class="text-xs text-red-600">{{ emailValidationMessage }}</span>
-          <span v-else-if="emailStatus === 'error'" class="text-xs text-amber-600">{{ emailValidationMessage }}</span>
+          <span v-else-if="emailStatus === 'error'" class="text-xs text-red-600">{{ emailValidationMessage }}</span>
           <span v-else-if="emailStatus === 'valid'" class="text-xs text-green-600">E-mail válido</span>
           <span v-else></span>
           <span

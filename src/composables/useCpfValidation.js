@@ -55,7 +55,7 @@ export function useCpfValidation() {
       console.log('[useCpfValidation] status FINAL definido como:', status.value)
     } catch (err) {
         status.value = 'error'
-        message.value = 'Não foi possível verificar o CPF agora. Tente novamente.'
+        message.value = 'Serviço de validação de CPF está indisponível no momento. Tente novamente mais tarde.'
         lastCheckedCpf.value = ''
         console.error('[useCpfValidation] ERRO ao validar CPF:', err)
         console.error('[useCpfValidation] err.response?.data:', err?.response?.data)
