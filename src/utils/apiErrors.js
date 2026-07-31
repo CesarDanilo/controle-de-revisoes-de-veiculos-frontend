@@ -12,7 +12,7 @@ const KNOWN_ERROR_MESSAGES = {
  * amigável em português. Se não encontrar mapeamento, retorna a mensagem
  * de fallback informada.
  */
-export function translateApiError(rawMessage, fallback = 'Não foi possível salvar a pessoa.') {
+export function translateApiError(rawMessage, fallback= rawMessage) {
   if (!rawMessage) return fallback
 
   // match exato

@@ -239,7 +239,7 @@ const handleSubmit = async (payload) => {
     closeModal()
   } catch (error) {
     const rawMessage = error.response?.data?.message ?? error.response?.data?.error
-    const message = translateApiError(rawMessage, 'Não foi possível salvar a pessoa.')
+    const message = translateApiError(rawMessage, 'CPF/CNPJ pertence a outra pessoa.')
     toast.error(message)
   } finally {
     isSubmitting.value = false

@@ -89,10 +89,23 @@ const formHasChanges = computed(() => {
 })
 // ------------------------------------------------------------------------
 
+const fieldErrors = ref({})
+const isSubmitting = ref(false)
+
+// 🔴 AQUI — limpa o erro de um campo específico (usado ao digitar, pra sumir o alerta antes do próximo blur)
+function clearFieldError(field) {
+  if (fieldErrors.value[field]) {
+    const updated = { ...fieldErrors.value }
+    delete updated[field]
+    fieldErrors.value = updated
+  }
+}
+
 const phoneModel = computed({
   get: () => maskPhone(form.phone),
   set: (val) => {
     form.phone = val.replace(/\D/g, '').slice(0, 11)
+    clearFieldError('phone') // 🔴 AQUI
   },
 })
 
@@ -145,6 +158,7 @@ const documentModel = computed({
     form.document = val.replace(/\D/g, '').slice(0, DOCUMENT_MAX_LENGTH.value)
     // mantém o cache sempre sincronizado com o que está sendo digitado
     documentByType[personType.value] = form.document
+    clearFieldError('document') // 🔴 AQUI
   },
 })
 
@@ -162,10 +176,8 @@ const sanitizeBirthDateYear = () => {
     const fixedYear = year.slice(0, 4)
     form.birth_date = [fixedYear, month, day].filter(Boolean).join('-')
   }
+  clearFieldError('birth_date') // 🔴 AQUI
 }
-
-const fieldErrors = ref({})
-const isSubmitting = ref(false)
 
 // ---- Validação de e-mail via Abstract API ----
 const {
@@ -214,6 +226,7 @@ watch(
     if (emailStatus.value !== 'idle') {
       resetEmailValidation()
     }
+    clearFieldError('email') // 🔴 AQUI
     if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
     emailDebounceTimer = setTimeout(() => runEmailValidation(newEmail), EMAIL_DEBOUNCE_MS)
   }
@@ -224,6 +237,14 @@ function handleEmailBlur() {
     clearTimeout(emailDebounceTimer)
     emailDebounceTimer = null
   }
+
+  // 🔴 AQUI — feedback de campo obrigatório ao sair do campo vazio
+  if (form.email.trim() === '') {
+    fieldErrors.value = { ...fieldErrors.value, email: ['Informe o e-mail.'] }
+    resetEmailValidation()
+    return
+  }
+
   runEmailValidation(form.email)
 }
 // ------------------------------------------------
@@ -291,6 +312,17 @@ watch(
 )
 
 function handleDocumentBlur() {
+  // 🔴 AQUI — feedback de campo obrigatório ao sair do campo vazio
+  if (form.document.trim() === '') {
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      document: [personType.value === 'PJ' ? 'Informe o CNPJ.' : 'Informe o CPF.'],
+    }
+    resetCpfValidation()
+    resetCnpjValidation()
+    return
+  }
+
   if (personType.value === 'PF') {
     if (cpfDebounceTimer) {
       clearTimeout(cpfDebounceTimer)
@@ -368,6 +400,29 @@ watch(
     cnpjDebounceTimer = setTimeout(() => runCnpjValidation(newDocument), CNPJ_DEBOUNCE_MS)
   }
 )
+// ------------------------------------------------
+
+// 🔴 AQUI — feedback de campo obrigatório pra Nome e Telefone (não têm validação remota, só precisam do alerta no blur)
+function handleNameBlur() {
+  if (form.name.trim() === '') {
+    fieldErrors.value = {
+      ...fieldErrors.value,
+      name: [personType.value === 'PJ' ? 'Informe a razão social.' : 'Informe o nome.'],
+    }
+  }
+}
+
+function handlePhoneBlur() {
+  if (form.phone.trim() === '') {
+    fieldErrors.value = { ...fieldErrors.value, phone: ['Informe o telefone.'] }
+  }
+}
+
+function handleBirthDateBlur() {
+  if (!form.birth_date) {
+    fieldErrors.value = { ...fieldErrors.value, birth_date: ['Informe a data de nascimento.'] }
+  }
+}
 // ------------------------------------------------
 
 onBeforeUnmount(() => {
@@ -508,6 +563,7 @@ const sanitizeNameLength = () => {
   if (form.name.length > NAME_MAX_LENGTH) {
     form.name = form.name.slice(0, NAME_MAX_LENGTH)
   }
+  clearFieldError('name') // 🔴 AQUI
 }
 
 const sanitizeEmailLength = () => {
@@ -554,7 +610,9 @@ const emailCharCount = computed(() => form.email.length)
   <BaseModal :title="isEditing ? 'Editar pessoa' : 'Nova pessoa'" @close="emit('close')">
     <form class="flex flex-col gap-4" @submit.prevent="handleSubmit" novalidate>
       <div class="flex flex-col gap-1.5">
-        <label class="text-sm font-medium text-ink-700">Tipo de cadastro</label>
+        <label class="text-sm font-medium text-ink-700">
+          Tipo de cadastro <span class="text-red-500">*</span>
+        </label>
         <div class="grid grid-cols-2 gap-2">
           <button
             type="button"
@@ -588,8 +646,11 @@ const emailCharCount = computed(() => form.email.length)
           :icon="User"
           :placeholder="personType === 'PJ' ? 'Nome da empresa' : 'Nome completo'"
           :maxlength="NAME_MAX_LENGTH"
+          required
+          :error="!!fieldErrors.name"
           @keydown="blockNameOverflow"
           @input="sanitizeNameLength"
+          @blur="handleNameBlur"
         />
         <div class="flex items-center justify-between">
           <span v-if="fieldErrors.name" class="text-xs text-red-600">{{ fieldErrors.name[0] }}</span>
@@ -604,7 +665,9 @@ const emailCharCount = computed(() => form.email.length)
       </div>
 
       <div v-if="personType === 'PF'" class="flex flex-col gap-1.5">
-        <label class="text-sm font-medium text-ink-700">Gênero</label>
+        <label class="text-sm font-medium text-ink-700">
+          Gênero <span class="text-red-500">*</span>
+        </label>
         <div class="grid grid-cols-3 gap-2">
           <button
             v-for="option in genderOptions"
@@ -629,7 +692,10 @@ const emailCharCount = computed(() => form.email.length)
           type="date"
           :icon="Calendar"
           :max="todayISO"
+          required
+          :error="!!fieldErrors.birth_date"
           @input="sanitizeBirthDateYear"
+          @blur="handleBirthDateBlur"
         />
         <span v-if="fieldErrors.birth_date" class="text-xs text-red-600">{{ fieldErrors.birth_date[0] }}</span>
       </div>
@@ -644,6 +710,8 @@ const emailCharCount = computed(() => form.email.length)
             placeholder="email@exemplo.com"
             :maxlength="EMAIL_MAX_LENGTH"
             class="pr-9"
+            required
+            :error="!!fieldErrors.email"
             @keydown="blockEmailOverflow"
             @input="sanitizeEmailLength"
             @blur="handleEmailBlur"
@@ -679,7 +747,10 @@ const emailCharCount = computed(() => form.email.length)
           placeholder="(00) 00000-0000"
           inputmode="numeric"
           maxlength="15"
+          required
+          :error="!!fieldErrors.phone"
           @keydown="blockPhoneOverflow"
+          @blur="handlePhoneBlur"
         />
         <span v-if="fieldErrors.phone" class="text-xs text-red-600">{{ fieldErrors.phone[0] }}</span>
       </div>
@@ -694,6 +765,8 @@ const emailCharCount = computed(() => form.email.length)
             inputmode="numeric"
             :maxlength="personType === 'PJ' ? 18 : 14"
             class="pr-9"
+            required
+            :error="!!fieldErrors.document"
             @keydown="blockDocumentOverflow"
             @blur="handleDocumentBlur"
           />
