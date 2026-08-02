@@ -133,6 +133,68 @@ const hasAnyData = computed(
 )
 
 // ---------------------------------------------------------------------
+// 🟢 NOVO — "CONGELAMENTO" DA TELA DURANTE EXPORTAÇÃO
+// ---------------------------------------------------------------------
+// PROBLEMA: fetchAllRows (mais abaixo) reaproveita os mesmos fetchers que
+// alimentam a tela (fetchRevisionsByPeriod, fetchAllPeople, etc.) pra
+// varrer TODAS as páginas antes de gerar o PDF. Só que esses fetchers
+// escrevem no MESMO `data`/`pagination` reativo que os KPIs, gráficos e
+// tabelas da tela já estão lendo — então, durante a exportação, a tela
+// pisca com os valores de cada página intermediária até a página original
+// ser restaurada no final. Isso NÃO pode acontecer na frente do cliente.
+//
+// SOLUÇÃO: assim que QUALQUER exportação começa (isExportingSection deixa
+// de ser null), tiramos uma "foto" do estado atual de data/pagination e
+// passamos a exibir essa foto congelada em vez do `data`/`pagination` ao
+// vivo. Quando a exportação termina, a foto é descartada e a tela volta a
+// ler o `data`/`pagination` ao vivo — que nesse ponto já foi restaurado
+// pra página original, então a transição é invisível pro usuário.
+//
+// isExportingSection é declarado aqui em cima (não mais lá embaixo, perto
+// dos exportXPDF) justamente para os computeds de KPI/tabela, que vêm
+// antes no arquivo, poderem depender dele.
+const isExportingSection = ref(null)
+const isExporting = computed(() => isExportingSection.value !== null)
+
+const frozenSnapshot = ref(null)
+
+watch(isExportingSection, (newVal, oldVal) => {
+  const startedExporting = newVal !== null && oldVal === null
+  const finishedExporting = newVal === null && oldVal !== null
+
+  if (startedExporting) {
+    frozenSnapshot.value = {
+      revisionsByPeriod: data.value.revisionsByPeriod.map((row) => ({ ...row })),
+      allPeople: data.value.allPeople.map((row) => ({ ...row })),
+      vehiclesByPerson: data.value.vehiclesByPerson.map((row) => ({ ...row })),
+      avgIntervalByPerson: data.value.avgIntervalByPerson.map((row) => ({ ...row })),
+      upcomingRevisions: data.value.upcomingRevisions.map((row) => ({ ...row })),
+      pagination: {
+        revisionsByPeriod: { ...pagination.revisionsByPeriod },
+        allPeople: { ...pagination.allPeople },
+        vehiclesByPerson: { ...pagination.vehiclesByPerson },
+        avgIntervalByPerson: { ...pagination.avgIntervalByPerson },
+        upcomingRevisions: { ...pagination.upcomingRevisions },
+      },
+    }
+  } else if (finishedExporting) {
+    frozenSnapshot.value = null
+  }
+})
+
+// Tudo que os KPIs/tabelas leem passa a vir daqui. Enquanto não há
+// exportação em andamento, é só um espelho de `data`/`pagination` ao vivo.
+const displayData = computed(() => frozenSnapshot.value ?? {
+  revisionsByPeriod: data.value.revisionsByPeriod,
+  allPeople: data.value.allPeople,
+  vehiclesByPerson: data.value.vehiclesByPerson,
+  avgIntervalByPerson: data.value.avgIntervalByPerson,
+  upcomingRevisions: data.value.upcomingRevisions,
+})
+
+const displayPagination = computed(() => frozenSnapshot.value?.pagination ?? pagination)
+
+// ---------------------------------------------------------------------
 // PAGINAÇÃO — handlers de troca de página por tabela
 // ---------------------------------------------------------------------
 const handleVehiclesByPersonPage = (page) => fetchVehiclesByPerson(page)
@@ -144,18 +206,20 @@ const handleAvgIntervalPage = (page) => fetchAvgIntervalByPerson(page)
 // ---------------------------------------------------------------------
 // KPIs
 // ---------------------------------------------------------------------
-const kpiTotalRevisoes = computed(() => data.value.revisionsByPeriod.length)
+// 🔧 CORRIGIDO — lêem de displayData (congelado durante exportação) em vez
+// de data.value diretamente, pra não piscar enquanto o PDF é gerado.
+const kpiTotalRevisoes = computed(() => displayData.value.revisionsByPeriod.length)
 
 const kpiVeiculosAtendidos = computed(
-  () => new Set(data.value.revisionsByPeriod.map((r) => r.vehicle)).size
+  () => new Set(displayData.value.revisionsByPeriod.map((r) => r.vehicle)).size
 )
 
 const kpiClientesAtendidos = computed(
-  () => new Set(data.value.revisionsByPeriod.map((r) => r.person_name)).size
+  () => new Set(displayData.value.revisionsByPeriod.map((r) => r.person_name)).size
 )
 
 const kpiCustoTotal = computed(() =>
-  data.value.revisionsByPeriod.reduce((sum, r) => sum + Number(r.cost || 0), 0)
+  displayData.value.revisionsByPeriod.reduce((sum, r) => sum + Number(r.cost || 0), 0)
 )
 
 const kpiTicketMedio = computed(() =>
@@ -194,7 +258,8 @@ const buildUpcomingWithStatus = (rows) => {
     .sort((a, b) => (a._rawDate ?? Infinity) - (b._rawDate ?? Infinity))
 }
 
-const upcomingWithStatus = computed(() => buildUpcomingWithStatus(data.value.upcomingRevisions))
+// 🔧 CORRIGIDO — usa displayData (congelado durante exportação)
+const upcomingWithStatus = computed(() => buildUpcomingWithStatus(displayData.value.upcomingRevisions))
 
 const kpiProximasRevisoes = computed(
   () => upcomingWithStatus.value.filter((r) => r.status === 'overdue' || r.status === 'soon').length
@@ -203,19 +268,24 @@ const kpiProximasRevisoes = computed(
 // ---------------------------------------------------------------------
 // TABELAS FORMATADAS
 // ---------------------------------------------------------------------
+// 🔧 CORRIGIDO — usam displayData (congelado durante exportação)
 const revisionsByPeriodFormatted = computed(() =>
-  data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) }))
+  displayData.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) }))
 )
 
 // Telefone chega do backend só com dígitos (ex: "11987654321"); aplica a
 // mesma máscara usada no formulário de cadastro pra exibir "(00) 00000-0000".
 const allPeopleFormatted = computed(() =>
-  data.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) }))
+  displayData.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) }))
 )
 
 // ---------------------------------------------------------------------
 // GRÁFICOS — 3 categorias de gênero
 // ---------------------------------------------------------------------
+// Não precisam de displayData: essas fontes (vehiclesByGender,
+// peopleByGender, brandsByGender, rankings) nunca são tocadas por
+// fetchAllRows durante uma exportação — só revisionsByPeriod, allPeople,
+// vehiclesByPerson, avgIntervalByPerson e upcomingRevisions são.
 const vehiclesByGenderChart = computed(() => ({
   labels: data.value.vehiclesByGender.map((g) => genderLabel(g.gender)),
   datasets: [{
@@ -488,11 +558,11 @@ const handleVehiclesByPersonRowClick = (row) => {
 // html2canvas. Cada botão dispara um PDF diferente, todos SEM a
 // paginação de 10-em-10 da tela: buscamos TODOS os registros antes de
 // gerar o arquivo.
+//
+// 🔧 CORRIGIDO — isExportingSection foi movido pra cima (perto de
+// displayData/frozenSnapshot), não é mais declarado aqui. O resto da
+// lógica de exportação continua igual.
 // ---------------------------------------------------------------------
-
-// 🟢 NOVO — controla qual botão está "carregando" no momento (só um por
-// vez), pra desabilitar/mostrar spinner no botão certo sem afetar os outros
-const isExportingSection = ref(null)
 
 const withExportLoading = async (key, task) => {
   if (isExportingSection.value) return
@@ -510,10 +580,13 @@ const withExportLoading = async (key, task) => {
 // 🔴 AQUI — os fetchers de useReports() são paginados (retornam só uma
 // página por vez, sobrescrevendo data.value.X). Pra exportar TODOS os
 // registros sem paginação, buscamos página por página e acumulamos aqui,
-// depois restauramos a página que o usuário estava vendo na tela. O ideal
-// a longo prazo é um endpoint dedicado no backend que devolva tudo de uma
-// vez (mais eficiente que N requisições), mas isso já resolve sem precisar
-// mexer na API agora.
+// depois restauramos a página que o usuário estava vendo na tela. Isso
+// continua escrevendo no data/pagination "ao vivo" — mas agora, como a
+// tela lê de displayData/displayPagination (congelados durante a
+// exportação), essas escritas intermediárias não aparecem visualmente.
+// O ideal a longo prazo é um endpoint dedicado no backend que devolva
+// tudo de uma vez (mais eficiente que N requisições), mas isso já
+// resolve sem precisar mexer na API agora.
 const fetchAllRows = async (fetchPage, getRows, getPagination, restorePage) => {
   const collected = []
   let page = 1
@@ -813,8 +886,8 @@ onMounted(loadAll)
       <button
         v-if="!isLoading && hasAnyData"
         type="button"
-        class="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-        :disabled="isExportingSection === 'full'"
+        class="flex w-full items-center justify-center gap-2 rounded-xl cursor-pointer bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+        :disabled="isExporting"
         @click="exportFullReportPDF"
       >
         <RefreshCw v-if="isExportingSection === 'full'" :size="16" class="animate-spin" />
@@ -886,10 +959,16 @@ onMounted(loadAll)
           </div>
 
           <!-- 🟢 NOVO — exporta só KPIs + rankings + quebra por gênero -->
+          <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting (qualquer
+               exportação em andamento), não só isExportingSection === 'overview'.
+               Antes, se outra exportação estivesse rodando, esse botão parecia
+               clicável mas o clique não fazia nada (bloqueado silenciosamente
+               em withExportLoading). Agora ele fica visualmente desabilitado
+               nesse caso, dando feedback real ao usuário. -->
           <button
             type="button"
-            class="flex shrink-0 items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-            :disabled="isExportingSection === 'overview'"
+            class="flex shrink-0 items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors  disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            :disabled="isExporting"
             @click="exportOverviewPDF"
           >
             <RefreshCw v-if="isExportingSection === 'overview'" :size="13" class="animate-spin" />
@@ -961,10 +1040,11 @@ onMounted(loadAll)
           class="mb-8 scroll-mt-6"
         >
           <div class="mb-3 flex justify-end">
+            <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting -->
             <button
               type="button"
-              class="flex items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-              :disabled="isExportingSection === 'upcoming'"
+              class="flex items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              :disabled="isExporting"
               @click="exportUpcomingRevisionsPDF"
             >
               <RefreshCw v-if="isExportingSection === 'upcoming'" :size="13" class="animate-spin" />
@@ -1004,10 +1084,11 @@ onMounted(loadAll)
 
           <!-- 🟢 NOVO — exporta a aba de detalhe ativa no momento, com TODOS
                os registros (sem a paginação de 10-em-10 da tabela na tela) -->
+          <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting -->
           <button
             type="button"
-            class="mb-2 flex shrink-0 items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-            :disabled="isExportingSection === activeTabExportKey"
+            class="mb-2 flex shrink-0 items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            :disabled="isExporting"
             @click="activeTabExportHandler()"
           >
             <RefreshCw v-if="isExportingSection === activeTabExportKey" :size="13" class="animate-spin" />
@@ -1024,8 +1105,8 @@ onMounted(loadAll)
                   { key: 'person_name', label: 'Pessoa' },
                   { key: 'avg_days', label: 'Média (dias)' },
                 ]"
-                :rows="data.avgIntervalByPerson"
-                :pagination="pagination.avgIntervalByPerson"
+                :rows="displayData.avgIntervalByPerson"
+                :pagination="displayPagination.avgIntervalByPerson"
                 :loading="tableLoading.avgIntervalByPerson"
                 row-clickable
                 @page-change="handleAvgIntervalPage"
@@ -1035,10 +1116,11 @@ onMounted(loadAll)
 
             <ReportPanel title="Revisões no período selecionado">
               <div class="mb-3 flex justify-end">
+                <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting -->
                 <button
                   type="button"
-                  class="flex items-center gap-1.5 rounded-lg border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                  :disabled="isExportingSection === 'periodRevisions'"
+                  class="flex items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                  :disabled="isExporting"
                   @click="exportRevisionsByPeriodPDF"
                 >
                   <RefreshCw v-if="isExportingSection === 'periodRevisions'" :size="13" class="animate-spin" />
@@ -1058,7 +1140,7 @@ onMounted(loadAll)
                   { key: 'description', label: 'Descrição' },
                 ]"
                 :rows="revisionsByPeriodFormatted"
-                :pagination="pagination.revisionsByPeriod"
+                :pagination="displayPagination.revisionsByPeriod"
                 :loading="tableLoading.revisionsByPeriod"
                 row-clickable
                 @page-change="handleRevisionsByPeriodPage"
@@ -1075,8 +1157,8 @@ onMounted(loadAll)
                 { key: 'model', label: 'Modelo' },
                 { key: 'brand', label: 'Marca' },
               ]"
-              :rows="data.vehiclesByPerson"
-              :pagination="pagination.vehiclesByPerson"
+              :rows="displayData.vehiclesByPerson"
+              :pagination="displayPagination.vehiclesByPerson"
               :loading="tableLoading.vehiclesByPerson"
               row-clickable
               @page-change="handleVehiclesByPersonPage"
@@ -1092,7 +1174,7 @@ onMounted(loadAll)
                 { key: 'phone', label: 'Telefone' },
               ]"
               :rows="allPeopleFormatted"
-              :pagination="pagination.allPeople"
+              :pagination="displayPagination.allPeople"
               :loading="tableLoading.allPeople"
               row-clickable
               @page-change="handleAllPeoplePage"
