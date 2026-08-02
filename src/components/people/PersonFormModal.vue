@@ -360,6 +360,7 @@ function handleDocumentBlur() {
 const {
   status: cnpjStatus,
   message: cnpjValidationMessage,
+  data: cnpjData,
   checkCnpj,
   reset: resetCnpjValidation,
 } = useCnpjValidation()
@@ -400,6 +401,34 @@ function runCnpjValidation(rawDocument) {
 
   checkCnpj(digits)
 }
+
+// 🔴 AQUI — assim que o CNPJ é confirmado como válido, sobrescreve Razão Social,
+// E-mail e Telefone com o que veio da API, não importa o que já estava no formulário
+function applyCnpjData(result) {
+  if (personType.value !== 'PJ') return
+
+  if (result.razao_social) {
+    form.name = result.razao_social.slice(0, NAME_MAX_LENGTH)
+    clearFieldError('name')
+  }
+
+  if (result.email) {
+    form.email = result.email.slice(0, EMAIL_MAX_LENGTH)
+    clearFieldError('email')
+  }
+
+  if (result.ddd_telefone_1) {
+    form.phone = result.ddd_telefone_1.replace(/\D/g, '').slice(0, 11)
+    clearFieldError('phone')
+  }
+}
+
+watch(cnpjStatus, (newStatus) => {
+  if (newStatus === 'valid' && cnpjData.value) {
+    applyCnpjData(cnpjData.value)
+  }
+})
+// ------------------------------------------------
 
 watch(
   () => form.document,
