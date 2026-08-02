@@ -70,10 +70,48 @@ const toISODate = (date) => {
 }
 
 // ---- Rótulo de gênero com 3 categorias (M / F / Outros) ----
-const GENDER_LABELS = { M: 'Homens', F: 'Mulheres' }
-const genderLabel = (code) => GENDER_LABELS[code] || 'Outros'
-const GENDER_COLORS = { M: '#6366f1', F: '#f472b6' }
-const genderColor = (code) => GENDER_COLORS[code] || '#94a3b8' // slate neutro pra "Outros"
+// 🔧 CORRIGIDO — o backend pode devolver o mesmo "grupo visual" (Outros)
+// em mais de uma linha (ex: gender = 'O' para PF que se identifica como
+// Outros, e gender = null para PJ, que não tem gênero — colunas
+// gender/birth_date são nullable desde a migration
+// alter_people_table_add_person_type). Antes, vehiclesByGenderChart e
+// peopleByGenderChart faziam um map() 1-para-1 em cima das linhas cruas
+// da API: cada linha virava uma fatia própria do doughnut, então 'O' e
+// null geravam DUAS fatias cinzas com o mesmo rótulo "Outros" e valores
+// diferentes, mesmo só existindo 3 categorias possíveis. Agora
+// normalizamos a chave ANTES de montar o gráfico e agregamos (somamos)
+// tudo que não for exatamente 'M' ou 'F' num único balde "OTHERS",
+// garantindo sempre no máximo 3 fatias.
+const GENDER_ORDER = ['M', 'F', 'OTHERS']
+const GENDER_LABELS = { M: 'Homens', F: 'Mulheres', OTHERS: 'Outros' }
+const GENDER_COLORS = { M: '#6366f1', F: '#f472b6', OTHERS: '#94a3b8' } // slate neutro pra "Outros"
+
+// Qualquer código que não seja exatamente 'M' ou 'F' (inclui 'O', null,
+// undefined, string vazia, etc.) cai no mesmo balde "OTHERS".
+const normalizeGenderKey = (code) => (code === 'M' || code === 'F' ? code : 'OTHERS')
+
+// Agrupa uma lista de linhas { gender, count } por chave normalizada,
+// somando os valores — em vez do map() 1-para-1 que causava a duplicação
+// de fatias "Outros" no gráfico.
+const aggregateByGender = (rows, countKey = 'count') => {
+  const totals = { M: 0, F: 0, OTHERS: 0 }
+
+  rows.forEach((row) => {
+    const key = normalizeGenderKey(row.gender)
+    totals[key] += Number(row[countKey] || 0)
+  })
+
+  return GENDER_ORDER
+    .map((key) => ({
+      key,
+      label: GENDER_LABELS[key],
+      value: totals[key],
+      color: GENDER_COLORS[key],
+    }))
+    // Some para não exibir fatia/legenda de valor zero (ex: se ainda não
+    // houver nenhuma pessoa/veículo "Outros" cadastrado).
+    .filter((entry) => entry.value > 0)
+}
 
 // ---------------------------------------------------------------------
 // FILTROS RÁPIDOS DE PERÍODO
@@ -286,23 +324,36 @@ const allPeopleFormatted = computed(() =>
 // peopleByGender, brandsByGender, rankings) nunca são tocadas por
 // fetchAllRows durante uma exportação — só revisionsByPeriod, allPeople,
 // vehiclesByPerson, avgIntervalByPerson e upcomingRevisions são.
-const vehiclesByGenderChart = computed(() => ({
-  labels: data.value.vehiclesByGender.map((g) => genderLabel(g.gender)),
-  datasets: [{
-    data: data.value.vehiclesByGender.map((g) => g.count),
-    backgroundColor: data.value.vehiclesByGender.map((g) => genderColor(g.gender)),
-    borderWidth: 0,
-  }],
-}))
+//
+// 🔧 CORRIGIDO — antes fazia um map() 1-para-1 direto em cima das linhas
+// cruas (data.value.vehiclesByGender), o que gerava fatias duplicadas de
+// "Outros" quando a API devolvia mais de uma linha caindo nesse grupo
+// (gender = 'O' e gender = null vinham como linhas separadas). Agora usa
+// aggregateByGender() pra somar tudo isso numa única fatia antes de
+// montar o gráfico.
+const vehiclesByGenderChart = computed(() => {
+  const aggregated = aggregateByGender(data.value.vehiclesByGender)
+  return {
+    labels: aggregated.map((g) => g.label),
+    datasets: [{
+      data: aggregated.map((g) => g.value),
+      backgroundColor: aggregated.map((g) => g.color),
+      borderWidth: 0,
+    }],
+  }
+})
 
-const peopleByGenderChart = computed(() => ({
-  labels: data.value.peopleByGender.map((g) => genderLabel(g.gender)),
-  datasets: [{
-    data: data.value.peopleByGender.map((g) => g.count),
-    backgroundColor: data.value.peopleByGender.map((g) => genderColor(g.gender)),
-    borderWidth: 0,
-  }],
-}))
+const peopleByGenderChart = computed(() => {
+  const aggregated = aggregateByGender(data.value.peopleByGender)
+  return {
+    labels: aggregated.map((g) => g.label),
+    datasets: [{
+      data: aggregated.map((g) => g.value),
+      backgroundColor: aggregated.map((g) => g.color),
+      borderWidth: 0,
+    }],
+  }
+})
 
 const brandsByGenderChart = computed(() => ({
   labels: data.value.brandsByGender.map((b) => b.brand),
@@ -320,6 +371,10 @@ const peopleRevisionItems = computed(() =>
   data.value.peopleRevisionRanking.map((p) => ({ label: p.person_name, value: p.count }))
 )
 
+// 🔧 CORRIGIDO — não muda de comportamento (M e F nunca duplicavam, só
+// "Outros" duplicava), mas segue lendo direto do array cru
+// (data.value.peopleByGender), não do agregado — aqui é busca pontual por
+// gênero específico, não soma de grupo.
 const avgAgeMale = computed(() => data.value.peopleByGender.find((g) => g.gender === 'M')?.avg_age ?? '—')
 const avgAgeFemale = computed(() => data.value.peopleByGender.find((g) => g.gender === 'F')?.avg_age ?? '—')
 
@@ -615,9 +670,11 @@ const buildOverviewPayload = () => ({
   ],
   brandsRanking: brandsRevisionItems.value,
   peopleRanking: peopleRevisionItems.value,
+  // 🔧 CORRIGIDO — usa aggregateByGender pra evitar duas linhas "Outros"
+  // também na quebra por gênero exportada no PDF de visão geral.
   genderBreakdown: [
-    ...data.value.vehiclesByGender.map((g) => ['Veículos', genderLabel(g.gender), String(g.count)]),
-    ...data.value.peopleByGender.map((g) => ['Pessoas', genderLabel(g.gender), String(g.count)]),
+    ...aggregateByGender(data.value.vehiclesByGender).map((g) => ['Veículos', g.label, String(g.value)]),
+    ...aggregateByGender(data.value.peopleByGender).map((g) => ['Pessoas', g.label, String(g.value)]),
   ],
 })
 
