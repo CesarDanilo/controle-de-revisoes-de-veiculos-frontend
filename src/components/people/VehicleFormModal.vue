@@ -21,7 +21,6 @@ const emit = defineEmits(['close'])
 
 const toast = useToast()
 
-// 🔴 AQUI — controla se o painel de cadastro/edição está expandido; por padrão, começa fechado (só a lista)
 const isFormOpen = ref(false)
 
 const emptyForm = () => ({
@@ -36,10 +35,8 @@ const emptyForm = () => ({
 const form = reactive(emptyForm())
 const editingVehicleId = ref(null)
 
-// snapshot normalizado do veículo original (usado pra detectar o que mudou)
 const originalSnapshot = ref(null)
 
-// 🔴 AQUI — snapshot bruto (sem validação) só pra controlar o estado do botão em tempo real
 const originalRawSnapshot = ref(null)
 
 const vehicles = ref([])
@@ -70,7 +67,6 @@ const isDeleting = ref(false)
 
 const isEditing = computed(() => editingVehicleId.value !== null)
 
-// 🔴 AQUI — true quando está editando e nenhum campo foi alterado ainda
 const isUnchanged = computed(() => {
   if (!isEditing.value || !originalRawSnapshot.value) return false
 
@@ -88,12 +84,10 @@ const isUnchanged = computed(() => {
 const brandName = (brandId) => brands.value.find((b) => b.id === brandId)?.name ?? '—'
 const colorName = (colorId) => colors.value.find((c) => c.id === colorId)?.name ?? '—'
 
-// lista ordenada alfabeticamente pro select, sem alterar a ordem original em colors.value
 const sortedColors = computed(() =>
   [...colors.value].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
 )
 
-// getter/setter com bloqueio real de caracteres (não só maxlength visual)
 const modelValue = computed({
   get: () => form.model,
   set: (value) => {
@@ -120,6 +114,8 @@ onMounted(async () => {
         (v) => String(v.id) === String(props.highlightVehicleId)
       )
       if (target) selectForEdit(target)
+    } else if (vehicles.value.length === 0) {
+      openCreateForm()
     }
   } finally {
     isLoadingBrands.value = false
@@ -132,17 +128,15 @@ const resetForm = () => {
   Object.assign(form, emptyForm())
   editingVehicleId.value = null
   originalSnapshot.value = null
-  originalRawSnapshot.value = null // 🔴 AQUI
+  originalRawSnapshot.value = null
   fieldErrors.value = {}
 }
 
-// 🔴 AQUI — abre o painel já pronto pra um novo cadastro
 const openCreateForm = () => {
   resetForm()
   isFormOpen.value = true
 }
 
-// 🔴 AQUI — fecha o painel e volta pra listagem, limpando qualquer edição/criação em andamento
 const closeForm = () => {
   resetForm()
   isFormOpen.value = false
@@ -157,13 +151,11 @@ const selectForEdit = (vehicle) => {
   form.people_id = props.person.id
   editingVehicleId.value = vehicle.id
   fieldErrors.value = {}
-  isFormOpen.value = true // 🔴 AQUI — editar sempre expande o painel
+  isFormOpen.value = true
 
-  // normaliza o estado original pelo mesmo schema, pra comparar "de igual pra igual" depois
   const parsed = vehicleSchema.safeParse(form)
   originalSnapshot.value = parsed.success ? parsed.data : null
 
-  // 🔴 AQUI — snapshot bruto do formulário logo após popular os campos, usado pro botão
   originalRawSnapshot.value = JSON.stringify({
     model: form.model,
     year: form.year,
@@ -173,13 +165,12 @@ const selectForEdit = (vehicle) => {
   })
 }
 
-// retorna só as chaves que mudaram entre o snapshot original e os dados validados atuais
 const getChangedFields = (validatedData) => {
-  if (!originalSnapshot.value) return validatedData // fallback: sem snapshot, envia tudo
+  if (!originalSnapshot.value) return validatedData
 
   const changed = {}
   for (const key of Object.keys(validatedData)) {
-    if (key === 'people_id') continue // nunca muda durante a edição, ignora na comparação
+    if (key === 'people_id') continue
     if (validatedData[key] !== originalSnapshot.value[key]) {
       changed[key] = validatedData[key]
     }
@@ -199,10 +190,8 @@ const cancelBrandCreation = () => {
   newBrandName.value = ''
 }
 
-// 🔴 AQUI — limite de caracteres pro nome da marca
 const BRAND_NAME_MAX_LENGTH = 30
 
-// 🔴 AQUI — bloqueio de digitação ao atingir o limite (mesmo padrão do Modelo)
 const handleBrandNameKeydown = (event) => {
   const allowedKeys = [
     'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight',
@@ -222,7 +211,6 @@ const handleBrandNameKeydown = (event) => {
   }
 }
 
-// 🔴 AQUI — trunca em caso de colar texto grande (Ctrl+V)
 const handleBrandNamePaste = (event) => {
   event.preventDefault()
   const pasted = (event.clipboardData || window.clipboardData).getData('text')
@@ -238,8 +226,6 @@ const saveNewBrand = async () => {
   const name = newBrandName.value.toUpperCase().trim()
   if (!name) return
 
-  // 🔴 AQUI — checagem local: já existe marca com esse nome na lista carregada?
-  // Evita a chamada de API e dá feedback instantâneo, sem esperar o backend.
   const alreadyExists = brands.value.some((b) => b.name.toUpperCase().trim() === name)
   if (alreadyExists) {
     toast.error('Essa marca já está cadastrada.')
@@ -254,9 +240,6 @@ const saveNewBrand = async () => {
     toast.success('Marca cadastrada com sucesso!')
     cancelBrandCreation()
   } catch (error) {
-    // 🔴 AQUI — feedback mais claro caso o backend acuse duplicidade
-    // (cobre o caso de outra pessoa ter cadastrado a mesma marca entre o
-    // carregamento da lista e esse submit — condição de corrida)
     const rawMessage = error.response?.data?.message ?? error.response?.data?.error
     const message = rawMessage?.includes('already been taken')
       ? 'Essa marca já está cadastrada.'
@@ -267,7 +250,6 @@ const saveNewBrand = async () => {
   }
 }
 
-// ---- Criação de cor (mesmo padrão da criação de marca) ----
 const openColorCreation = async () => {
   isCreatingColor.value = true
   newColorName.value = ''
@@ -316,7 +298,6 @@ const saveNewColor = async () => {
   const name = newColorName.value.trim()
   if (!name) return
 
-  // checagem local: já existe cor com esse nome na lista carregada?
   const alreadyExists = colors.value.some((c) => c.name.toUpperCase().trim() === name.toUpperCase())
   if (alreadyExists) {
     toast.error('Essa cor já está cadastrada.')
@@ -340,11 +321,7 @@ const saveNewColor = async () => {
     isSavingColor.value = false
   }
 }
-// ------------------------------------------------------------
 
-// 🔴 NOVO — traduz mensagens conhecidas que o Laravel devolve em inglês
-// dentro de `errors.<campo>`. Adicione outros `includes` aqui conforme
-// surgirem novos casos (ex: marca/cor duplicada retornando do backend).
 const translateVehicleFieldMessage = (message) => {
   if (!message) return null
 
@@ -357,16 +334,10 @@ const translateVehicleFieldMessage = (message) => {
   return message
 }
 
-// 🔴 NOVO — trata o erro de submit (create/update) de forma unificada:
-// 1) Se for erro de validação (422) com o objeto `errors` do Laravel,
-//    preenche `fieldErrors` (mostra a mensagem embaixo do campo certo,
-//    ex: Placa) e retorna a primeira mensagem já traduzida pro toast.
-// 2) Caso contrário, cai no fallback genérico de sempre.
 const applyBackendValidationErrors = (error) => {
   const backendErrors = error.response?.data?.errors
 
   if (error.response?.status === 422 && backendErrors && Object.keys(backendErrors).length) {
-    // Laravel manda um array de mensagens por campo — pegamos a primeira de cada.
     fieldErrors.value = Object.fromEntries(
       Object.entries(backendErrors).map(([field, messages]) => [field, [translateVehicleFieldMessage(messages[0])]])
     )
@@ -389,7 +360,6 @@ const handleSubmit = async () => {
 
   fieldErrors.value = {}
 
-  // --- modo edição: verifica se algo realmente mudou antes de chamar a API ---
   if (isEditing.value) {
     const changedFields = getChangedFields(result.data)
 
@@ -399,7 +369,6 @@ const handleSubmit = async () => {
     }
 
     isSubmitting.value = true
-    // se "year" estiver entre os campos alterados, converte pra number antes de enviar
     const payload = 'year' in changedFields
       ? { ...changedFields, year: Number(changedFields.year) }
       : changedFields
@@ -409,12 +378,8 @@ const handleSubmit = async () => {
       const index = vehicles.value.findIndex((v) => v.id === editingVehicleId.value)
       if (index !== -1) vehicles.value[index] = updated
       toast.success('Veículo atualizado com sucesso!')
-      resetForm() // 🔴 AQUI — limpa e volta pro modo criação, mas o painel continua aberto
+      resetForm()
     } catch (error) {
-      // 🔴 CORRIGIDO — antes lia só `data.message`, que no erro de validação (422) do
-      // Laravel é sempre o texto genérico "The given data was invalid." em inglês. A
-      // mensagem específica ("The license plate has already been taken.") fica dentro
-      // de `data.errors.license_plate`, então o toast nunca mostrava a mensagem certa.
       toast.error(applyBackendValidationErrors(error))
     } finally {
       isSubmitting.value = false
@@ -422,7 +387,6 @@ const handleSubmit = async () => {
     return
   }
 
-  // --- modo criação: comportamento original, envia tudo ---
   isSubmitting.value = true
   const payload = { ...result.data, year: Number(result.data.year) }
 
@@ -430,12 +394,8 @@ const handleSubmit = async () => {
     const created = await vehicleService.create(payload)
     vehicles.value.unshift(created)
     toast.success('Veículo cadastrado com sucesso!')
-    resetForm() // 🔴 AQUI — limpa o formulário, mas o painel continua aberto pra um novo cadastro
+    resetForm()
   } catch (error) {
-    // 🔴 CORRIGIDO — mesma causa do bloco de edição: a comparação exata com
-    // `data.message` nunca batia com o erro real de validação (422), que vem
-    // dentro de `data.errors`. Agora usa o mesmo helper, que já traduz e também
-    // preenche `fieldErrors.license_plate` pra aparecer embaixo do campo Placa.
     toast.error(applyBackendValidationErrors(error))
   } finally {
     isSubmitting.value = false
@@ -461,6 +421,10 @@ const confirmDeleteVehicle = async () => {
     if (editingVehicleId.value === vehicleToDelete.value.id) resetForm()
     toast.success('Veículo removido com sucesso!')
     closeConfirm()
+
+    if (vehicles.value.length === 0) {
+      openCreateForm()
+    }
   } catch (error) {
     const message = error.response?.data?.message ?? error.response?.data?.error ?? 'Não foi possível remover o veículo.'
     toast.error(message)
@@ -478,7 +442,6 @@ const handleModelKeydown = (event) => {
     'Enter', 'Escape',
   ]
 
-  // permite atalhos (ctrl/cmd + a/c/v/x) e teclas de navegação
   if (event.ctrlKey || event.metaKey || allowedKeys.includes(event.key)) {
     return
   }
@@ -486,7 +449,6 @@ const handleModelKeydown = (event) => {
   const input = event.target
   const hasSelection = input.selectionStart !== input.selectionEnd
 
-  // se já está no limite e não há seleção pra substituir, bloqueia a tecla
   if (form.model.length >= MODEL_MAX_LENGTH && !hasSelection) {
     event.preventDefault()
   }
@@ -503,7 +465,6 @@ const handleModelPaste = (event) => {
   form.model = newValue.slice(0, MODEL_MAX_LENGTH)
 }
 
-// 🔴 AQUI — computeds pro contador de caracteres (Modelo, Nova marca e Nova cor)
 const modelCharCount = computed(() => form.model.length)
 const brandNameCharCount = computed(() => newBrandName.value.length)
 const colorNameCharCount = computed(() => newColorName.value.length)
@@ -513,7 +474,6 @@ const isDigit = (char) => /^[0-9]$/.test(char)
 
 const YEAR_MAX_LENGTH = 4
 
-// filtra e formata um valor completo de ano (usado no v-model e no paste)
 const formatYear = (value) => {
   return value.replace(/\D/g, '').slice(0, YEAR_MAX_LENGTH)
 }
@@ -536,12 +496,10 @@ const handleYearKeydown = (event) => {
     return
   }
 
-  // ignora teclas especiais (Shift, CapsLock, F1 etc.)
   if (event.key.length !== 1) {
     return
   }
 
-  // bloqueia qualquer coisa que não seja dígito
   if (!isDigit(event.key)) {
     event.preventDefault()
     return
@@ -550,7 +508,6 @@ const handleYearKeydown = (event) => {
   const input = event.target
   const hasSelection = input.selectionStart !== input.selectionEnd
 
-  // já está no limite e não há seleção pra substituir: bloqueia
   if (form.year.length >= YEAR_MAX_LENGTH && !hasSelection) {
     event.preventDefault()
   }
@@ -569,15 +526,13 @@ const handleYearPaste = (event) => {
 
 const LICENSE_PLATE_MAX_LENGTH = 7
 
-// define o tipo de caractere aceito em cada posição da placa
 const licensePlateCharAllowed = (position, char) => {
-  if (position <= 2) return isLetter(char) // ABC
-  if (position === 3) return isDigit(char) // 1
-  if (position === 4) return isLetter(char) || isDigit(char) // D (Mercosul) ou 2 (antigo)
-  return isDigit(char) // 23
+  if (position <= 2) return isLetter(char)
+  if (position === 3) return isDigit(char)
+  if (position === 4) return isLetter(char) || isDigit(char)
+  return isDigit(char)
 }
 
-// filtra e formata um valor completo (usado no v-model e no paste)
 const formatLicensePlate = (value) => {
   const upper = value.toUpperCase()
   let result = ''
@@ -608,7 +563,6 @@ const handleLicensePlateKeydown = (event) => {
     return
   }
 
-  // ignora teclas especiais (Shift, CapsLock, F1 etc.)
   if (event.key.length !== 1) {
     return
   }
@@ -616,13 +570,11 @@ const handleLicensePlateKeydown = (event) => {
   const input = event.target
   const hasSelection = input.selectionStart !== input.selectionEnd
 
-  // já está no limite e não há seleção pra substituir: bloqueia
   if (form.license_plate.length >= LICENSE_PLATE_MAX_LENGTH && !hasSelection) {
     event.preventDefault()
     return
   }
 
-  // bloqueia se o caractere não é do tipo esperado pra posição atual
   const caretPosition = input.selectionStart
   if (!licensePlateCharAllowed(caretPosition, event.key)) {
     event.preventDefault()
@@ -649,7 +601,6 @@ const handleLicensePlatePaste = (event) => {
           <h3 class="text-sm font-semibold text-ink-700">
             {{ isLoadingVehicles ? 'Carregando...' : `${vehicles.length} veículo(s)` }}
           </h3>
-          <!-- 🔴 AQUI — botão só aparece com a lista sozinha (painel fechado) -->
           <BaseButton v-if="!isFormOpen" type="button" @click="openCreateForm">
             <Plus :size="16" />
             Adicionar veículo
@@ -706,7 +657,6 @@ const handleLicensePlatePaste = (event) => {
         </div>
       </div>
 
-      <!-- 🔴 AQUI — painel de cadastro/edição só é renderizado quando isFormOpen é true -->
       <div
         v-if="isFormOpen"
         class="flex flex-col gap-4 border-t border-surface-border pt-6 md:border-l md:border-t-0 md:pl-6 md:pt-0"
@@ -908,7 +858,6 @@ const handleLicensePlatePaste = (event) => {
           </div>
 
           <div class="mt-2 flex justify-end gap-3">
-            <!-- 🔴 AQUI — sempre visível com o painel aberto, tanto em criação quanto edição -->
             <BaseButton type="button" variant="ghost" @click="closeForm">
               {{ isEditing ? 'Cancelar edição' : 'Cancelar' }}
             </BaseButton>

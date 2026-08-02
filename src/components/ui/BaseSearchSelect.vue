@@ -4,7 +4,7 @@ import { ChevronDown, Search, Check } from '@lucide/vue'
 
 const props = defineProps({
   modelValue: { type: [String, Number], default: '' },
-  options: { type: Array, required: true }, // [{ id, name }]
+  options: { type: Array, required: true },
   placeholder: { type: String, default: 'Selecione' },
   loadingText: { type: String, default: 'Carregando...' },
   searchPlaceholder: { type: String, default: 'Pesquisar...' },
@@ -23,6 +23,9 @@ const searchInputRef = ref(null)
 const rootRef = ref(null)
 const listboxId = useId()
 
+const activeIndex = ref(-1)
+const optionRefs = ref([])
+
 const selectedOption = computed(() =>
   props.options.find((option) => option.id === props.modelValue) ?? null
 )
@@ -39,17 +42,41 @@ const remainingChars = computed(() => props.searchMaxLength - searchTerm.value.l
 const isNearLimit = computed(() => remainingChars.value <= 5)
 const isAtLimit = computed(() => remainingChars.value <= 0)
 
+const activeOptionId = computed(() => {
+  const option = filteredOptions.value[activeIndex.value]
+  return option ? `${listboxId}-option-${option.id}` : undefined
+})
+
+function setOptionRef(el, index) {
+  if (el) optionRefs.value[index] = el
+}
+
+function scrollActiveIntoView() {
+  const el = optionRefs.value[activeIndex.value]
+  if (el) el.scrollIntoView({ block: 'nearest' })
+}
+
+function initActiveIndex() {
+  const selectedIndex = filteredOptions.value.findIndex((option) => option.id === props.modelValue)
+  activeIndex.value = selectedIndex !== -1 ? selectedIndex : (filteredOptions.value.length ? 0 : -1)
+}
+
 async function openDropdown() {
   if (isDisabled.value) return
   isOpen.value = true
   searchTerm.value = ''
   await nextTick()
+  initActiveIndex()
   searchInputRef.value?.focus()
+  await nextTick()
+  scrollActiveIntoView()
 }
 
 function closeDropdown() {
   isOpen.value = false
   searchTerm.value = ''
+  activeIndex.value = -1
+  optionRefs.value = []
 }
 
 function toggleDropdown() {
@@ -79,6 +106,56 @@ function handleEscape(event) {
   }
 }
 
+function handleTriggerKeydown(event) {
+  if (isDisabled.value) return
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    if (!isOpen.value) {
+      openDropdown()
+    }
+  }
+}
+
+async function handleSearchKeydown(event) {
+  if (!filteredOptions.value.length) return
+
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    activeIndex.value = activeIndex.value < filteredOptions.value.length - 1 ? activeIndex.value + 1 : 0
+    await nextTick()
+    scrollActiveIntoView()
+    return
+  }
+
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    activeIndex.value = activeIndex.value > 0 ? activeIndex.value - 1 : filteredOptions.value.length - 1
+    await nextTick()
+    scrollActiveIntoView()
+    return
+  }
+
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    const option = filteredOptions.value[activeIndex.value]
+    if (option) selectOption(option)
+  }
+}
+
+watch(filteredOptions, () => {
+  if (!isOpen.value) return
+  optionRefs.value = []
+  if (!filteredOptions.value.length) {
+    activeIndex.value = -1
+    return
+  }
+  if (activeIndex.value >= filteredOptions.value.length) {
+    activeIndex.value = filteredOptions.value.length - 1
+  } else if (activeIndex.value === -1) {
+    activeIndex.value = 0
+  }
+})
+
 watch(isOpen, (open) => {
   if (open) {
     document.addEventListener('mousedown', handleClickOutside)
@@ -101,6 +178,7 @@ watch(isOpen, (open) => {
       :aria-expanded="isOpen"
       aria-haspopup="listbox"
       @click="toggleDropdown"
+      @keydown="handleTriggerKeydown"
     >
       <span class="truncate" :class="!selectedOption ? 'text-ink-400' : 'text-ink-900'">
         {{ loading ? loadingText : (selectedOption ? selectedOption.name : placeholder) }}
@@ -125,7 +203,13 @@ watch(isOpen, (open) => {
             type="text"
             :maxlength="searchMaxLength"
             :placeholder="searchPlaceholder"
+            role="combobox"
+            :aria-expanded="isOpen"
+            aria-autocomplete="list"
+            :aria-controls="listboxId"
+            :aria-activedescendant="activeOptionId"
             class="w-full text-sm text-ink-900 outline-none placeholder:text-ink-400"
+            @keydown="handleSearchKeydown"
           />
           <span
             v-if="searchTerm.length > 0"
@@ -139,11 +223,21 @@ watch(isOpen, (open) => {
 
       <ul :id="listboxId" role="listbox" class="max-h-48 overflow-y-auto py-1">
         <li
-          v-for="option in filteredOptions"
+          v-for="(option, index) in filteredOptions"
+          :id="`${listboxId}-option-${option.id}`"
           :key="option.id"
+          :ref="(el) => setOptionRef(el, index)"
           role="option"
-          class="flex cursor-pointer items-center justify-between px-3 py-2 text-sm transition-colors hover:bg-brand-50"
-          :class="option.id === modelValue ? 'bg-brand-50 font-medium text-brand-700' : 'text-ink-900'"
+          :aria-selected="option.id === modelValue"
+          class="flex cursor-pointer items-center justify-between px-3 py-2 text-sm transition-colors"
+          :class="[
+            index === activeIndex
+              ? 'bg-brand-100 text-brand-700'
+              : option.id === modelValue
+                ? 'bg-brand-50 font-medium text-brand-700'
+                : 'text-ink-900 hover:bg-brand-50',
+          ]"
+          @mouseenter="activeIndex = index"
           @click="selectOption(option)"
         >
           {{ option.name }}
