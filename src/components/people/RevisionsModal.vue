@@ -9,9 +9,6 @@ import { useToast } from '../../composables/useToast'
 
 const props = defineProps({
   person: { type: Object, required: true },
-  // 🔴 AQUI — opcionais: quando informados (ex: clique vindo do painel de
-  // "Próximas revisões"), o modal rola até a revisão e dá um destaque visual
-  // temporário nela.
   highlightVehicleId: { type: [String, Number], default: null },
   highlightRevisionId: { type: [String, Number], default: null },
 })
@@ -24,28 +21,19 @@ const vehicles = ref([])
 const revisionsByVehicle = reactive({})
 const isLoading = ref(true)
 
-// --- Revision form state (shared between create and edit) ---
 const openFormVehicleId = ref(null)
-const formMode = ref('create') // 'create' | 'edit'
+const formMode = ref('create')
 const editingRevisionId = ref(null)
 const isSubmitting = ref(false)
-const formError = ref('') // erros gerais/backend, não ligados a um campo específico
+const formError = ref('')
 
-// 🔴 AQUI — texto fixo (descrição + data) da revisão sendo editada, capturado
-// no momento em que o "Editar" é clicado. Não muda enquanto o usuário digita
-// no formulário — serve só como referência visual de "qual revisão é essa".
 const editingRevisionLabel = ref('')
 
-// 🔴 AQUI — mapa de refs (uma por veículo), porque uma ref com nome fixo
-// dentro de um v-for é tratada pelo Vue como ARRAY, não como elemento único —
-// era por isso que o .focus() não funcionava antes
 const descriptionInputRefs = ref({})
 const setDescriptionInputRef = (vehicleId) => (el) => {
   descriptionInputRefs.value[vehicleId] = el
 }
 
-// 🔴 AQUI — mapa de refs do <form> de cada veículo, usado só para rolar até
-// o formulário quando ele é aberto automaticamente em modo edição
 const formRefs = ref({})
 const setFormRef = (vehicleId) => (el) => {
   formRefs.value[vehicleId] = el
@@ -53,13 +41,8 @@ const setFormRef = (vehicleId) => (el) => {
 
 const DESCRIPTION_MAX_LENGTH = 150
 
-// 🔴 AQUI — quantos anos no futuro a próxima revisão pode ser agendada
 const MAX_YEARS_AHEAD = 5
 
-// 🔴 AQUI — espelha os enums StatusRevisao e StatusPagamento do backend.
-// Se você mudar os enums no PHP, atualize aqui também (ou exponha via
-// StatusRevisao::options() / StatusPagamento::options() num endpoint e troque
-// isso por uma chamada de API, se preferir manter uma fonte única de verdade).
 const STATUS_OPTIONS = [
   { value: 'aberto', label: 'Aberto' },
   { value: 'em_andamento', label: 'Em/Andamento' },
@@ -67,6 +50,12 @@ const STATUS_OPTIONS = [
   { value: 'concluido', label: 'Concluído' },
   { value: 'cancelado', label: 'Cancelado' },
 ]
+
+const statusOptionsForForm = computed(() =>
+  formMode.value === 'create'
+    ? STATUS_OPTIONS.filter((option) => option.value !== 'cancelado')
+    : STATUS_OPTIONS
+)
 
 const STATUS_PAGAMENTO_OPTIONS = [
   { value: 'pendente', label: 'Pendente' },
@@ -99,9 +88,6 @@ const emptyFieldErrors = () => ({
 })
 const fieldErrors = reactive(emptyFieldErrors())
 
-// custo nasce em 0 (não null) — pagamento é sempre informado, mesmo que gratuito
-// status/status_pagamento agora aparecem tanto na criação quanto na edição,
-// já nascendo com os defaults do banco (aberto/pendente) — ver template.
 const emptyForm = () => ({
   description: '',
   revision_date: new Date().toISOString().slice(0, 10),
@@ -114,17 +100,10 @@ const emptyForm = () => ({
 })
 const formData = reactive(emptyForm())
 
-// snapshot normalizado da revisão original (usado pra detectar o que mudou na edição)
 const originalSnapshot = ref(null)
 
-// 🔴 AQUI — snapshot separado pra status/status_pagamento, porque esses dois
-// campos são salvos através de um endpoint diferente (updateStatusFields), então
-// precisam da própria detecção de "mudou ou não"
 const originalStatusSnapshot = ref(null)
 
-// 🔴 AQUI — no modo criação sempre libera o botão; no modo edição só libera
-// quando algum campo (incluindo status/status_pagamento) realmente mudou
-// em relação ao snapshot original
 const hasChanges = computed(() => {
   if (formMode.value !== 'edit') return true
   if (!originalSnapshot.value) return true
@@ -142,19 +121,12 @@ const hasChanges = computed(() => {
   return regularChanged || statusChanged
 })
 
-// --- Delete state ---
-const revisionToDelete = ref(null) // { vehicleId, revision } | null
+const revisionToDelete = ref(null)
 const deletingRevisionId = ref(null)
 const deleteErrorByVehicle = reactive({})
 
-// ---------- data de hoje no fuso local (yyyy-mm-dd) ----------
 const todayISO = () => new Date().toLocaleDateString('sv-SE')
 
-// 🔴 AQUI — limites de data pros inputs type="date"
-// Data da revisão atual: não pode ser no futuro
-const maxRevisionDate = computed(() => todayISO())
-
-// Data da próxima revisão: não pode ser antes da revisão atual, nem muito distante no futuro
 const minNextRevisionDate = computed(() => {
   if (!formData.revision_date) return undefined
   const d = new Date(`${formData.revision_date}T00:00:00`)
@@ -168,7 +140,6 @@ const maxNextRevisionDate = computed(() => {
   return d.toLocaleDateString('sv-SE')
 })
 
-// ---------- formatação de data (FIX timezone) ----------
 const formatDate = (dateStr) => {
   if (!dateStr) return '—'
   const isoPart = String(dateStr).slice(0, 10)
@@ -183,7 +154,6 @@ const formatCurrency = (value) => {
   return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-// ---------- isOverdue (FIX timezone) ----------
 const isOverdue = (dateStr) => {
   if (!dateStr) return false
   return String(dateStr).slice(0, 10) < todayISO()
@@ -192,9 +162,6 @@ const isOverdue = (dateStr) => {
 const sortRevisions = (list) =>
   [...list].sort((a, b) => new Date(b.revision_date) - new Date(a.revision_date))
 
-// 🔴 AQUI — retorna a lista de revisões do veículo já excluindo (visualmente)
-// a que está sendo editada nesse momento, pra não duplicar informação com o
-// formulário logo acima. Não altera revisionsByVehicle — só filtra pra exibição.
 const visibleRevisions = (vehicleId) => {
   const list = revisionsByVehicle[vehicleId] || []
   if (formMode.value === 'edit' && openFormVehicleId.value === vehicleId && editingRevisionId.value) {
@@ -203,8 +170,13 @@ const visibleRevisions = (vehicleId) => {
   return list
 }
 
-// ---------- máscara de KM com separador de milhar, com limite ----------
-const MAX_KM_DIGITS = 7 // permite até 9.999.999 km
+// 🔴 AQUI — total de revisões somando todos os veículos da pessoa, usado
+// pra decidir se o formulário deve abrir sozinho ao carregar o modal
+const totalRevisionsCount = computed(() =>
+  vehicles.value.reduce((sum, vehicle) => sum + (revisionsByVehicle[vehicle.id]?.length || 0), 0)
+)
+
+const MAX_KM_DIGITS = 7
 
 const formatKmDigits = (digits) => {
   if (!digits) return ''
@@ -275,8 +247,7 @@ function makeBlockKmPaste(kmModelRef) {
 const blockKmPaste = makeBlockKmPaste(kmModel)
 const blockNextRevisionKmPaste = makeBlockKmPaste(nextRevisionKmModel)
 
-// ---------- máscara de moeda para o custo, com limite ----------
-const MAX_COST_DIGITS = 8 // até R$ 999.999,99 — ajuste conforme a realidade do seu negócio
+const MAX_COST_DIGITS = 8
 
 const costModel = computed({
   get() {
@@ -338,7 +309,6 @@ function blockCostPaste(e) {
   costModel.value = merged
 }
 
-// ---------- tradução de erros de validação vindos do Laravel ----------
 const FIELD_LABELS = {
   description: 'Descrição',
   revision_date: 'Data da revisão',
@@ -391,9 +361,6 @@ function translateValidationErrors(validationErrors) {
     .join(' ')
 }
 
-// ---------- comparação de campos alterados (evita update desnecessário) ----------
-// Só os campos "normais" da revisão — status/status_pagamento têm o próprio
-// snapshot (originalStatusSnapshot) e vão pro endpoint updateStatusFields.
 function buildComparablePayload() {
   return {
     description: formData.description.trim(),
@@ -428,9 +395,6 @@ const loadAll = async () => {
   }
 }
 
-// 🔴 AQUI — depois de carregar tudo, se veio um highlightRevisionId (clique
-// vindo do painel de "Próximas revisões"), já abre o formulário dessa
-// revisão em modo edição, em vez de só mostrar a lista.
 const openHighlightedForEdit = () => {
   if (!props.highlightRevisionId) return
 
@@ -447,7 +411,6 @@ const openHighlightedForEdit = () => {
     }
   }
 
-  // revisão não encontrada entre as carregadas (ex: já foi excluída) — não faz nada
   if (!targetRevision) return
 
   startEdit(targetVehicleId, targetRevision)
@@ -459,17 +422,29 @@ const openHighlightedForEdit = () => {
   })
 }
 
-// 🔴 AQUI — chave que identifica "qual formulário está aberto e em qual modo"
-// Precisa incluir formMode/editingRevisionId porque trocar de criar -> editar
-// no MESMO veículo não muda openFormVehicleId, e o watch não disparia só com ele.
+// 🔴 AQUI — mesma lógica usada no cadastro de veículos: se não há nenhuma
+// revisão cadastrada (em nenhum veículo da pessoa), abre o formulário de
+// criação direto no primeiro veículo, pra já pedir o preenchimento
+const openCreateFormIfEmpty = () => {
+  if (props.highlightRevisionId) return
+  if (!vehicles.value.length) return
+  if (totalRevisionsCount.value > 0) return
+
+  const firstVehicleId = vehicles.value[0].id
+  toggleForm(firstVehicleId)
+
+  nextTick(() => {
+    setTimeout(() => {
+      formRefs.value[firstVehicleId]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 150)
+  })
+}
+
 const openFormKey = computed(() => {
   if (openFormVehicleId.value === null) return null
   return `${openFormVehicleId.value}:${formMode.value}:${editingRevisionId.value}`
 })
 
-// 🔴 AQUI — dispara o foco sempre que um formulário (novo ou edição) é aberto,
-// já rodando depois que o Vue atualiza o DOM (flush: 'post'), com uma folga
-// extra de tempo pra cobrir a transição do modal/formulário
 watch(openFormKey, (key) => {
   if (key === null) return
   setTimeout(() => {
@@ -477,7 +452,6 @@ watch(openFormKey, (key) => {
   }, 80)
 }, { flush: 'post' })
 
-// Open the form fresh, for creating a new revision on this vehicle.
 const toggleForm = (vehicleId) => {
   if (openFormVehicleId.value === vehicleId && formMode.value === 'create') {
     closeForm()
@@ -486,7 +460,7 @@ const toggleForm = (vehicleId) => {
   openFormVehicleId.value = vehicleId
   formMode.value = 'create'
   editingRevisionId.value = null
-  editingRevisionLabel.value = '' // 🔴 AQUI
+  editingRevisionLabel.value = ''
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
   originalSnapshot.value = null
@@ -494,14 +468,11 @@ const toggleForm = (vehicleId) => {
   Object.assign(formData, emptyForm())
 }
 
-// Open the same form pre-filled, for editing an existing revision.
 const startEdit = (vehicleId, revision) => {
   revisionToDelete.value = null
   openFormVehicleId.value = vehicleId
   formMode.value = 'edit'
   editingRevisionId.value = revision.id
-  // 🔴 AQUI — captura a referência fixa (descrição + data) ANTES de qualquer
-  // edição, pra servir de "etiqueta" estável no topo do formulário
   editingRevisionLabel.value = `${revision.description || 'Revisão sem descrição'} · ${formatDate(revision.revision_date)}`
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
@@ -535,7 +506,7 @@ const closeForm = () => {
   openFormVehicleId.value = null
   formMode.value = 'create'
   editingRevisionId.value = null
-  editingRevisionLabel.value = '' // 🔴 AQUI
+  editingRevisionLabel.value = ''
   formError.value = ''
   Object.assign(fieldErrors, emptyFieldErrors())
   originalSnapshot.value = null
@@ -560,10 +531,6 @@ const submitRevision = async (vehicle) => {
   if (!formData.revision_date) {
     fieldErrors.revision_date = 'Informe a data em que a revisão atual foi realizada.'
     hasError = true
-  } else if (formData.revision_date > maxRevisionDate.value) {
-    // 🔴 AQUI — trava reforçada no JS, além do "max" do input
-    fieldErrors.revision_date = 'A data da revisão não pode ser no futuro.'
-    hasError = true
   }
   if (formData.cost === null || formData.cost === undefined || formData.cost === '') {
     fieldErrors.cost = 'Informe o custo do serviço. Se foi gratuito, informe 0,00.'
@@ -581,7 +548,6 @@ const submitRevision = async (vehicle) => {
       'A data da próxima revisão deve ser posterior à data da revisão atual (não pode ser igual).'
     hasError = true
   } else if (
-    // 🔴 AQUI — não permite agendar a próxima revisão pra um futuro muito distante
     formData.next_revision_date &&
     formData.next_revision_date > maxNextRevisionDate.value
   ) {
@@ -601,7 +567,6 @@ const submitRevision = async (vehicle) => {
 
   if (hasError) return
 
-  // --- modo edição: verifica o que mudou antes de chamar a API ---
   if (formMode.value === 'edit' && editingRevisionId.value) {
     const comparable = buildComparablePayload()
     const changedFields = {}
@@ -612,8 +577,6 @@ const submitRevision = async (vehicle) => {
       }
     }
 
-    // 🔴 AQUI — status/status_pagamento vão num payload separado, porque são
-    // salvos pelo endpoint dedicado (não pelo update geral)
     const statusPayload = {}
     if (formData.status !== originalStatusSnapshot.value?.status) {
       statusPayload.status = formData.status
@@ -641,9 +604,6 @@ const submitRevision = async (vehicle) => {
       }
 
       if (hasStatusChanges) {
-        // 🔴 AQUI — usa o método dedicado do serviço (endpoint PATCH
-        // /revisions/{id}/status), diferente do updateStatus() do Kanban,
-        // que só manda a string do status.
         const rawStatusUpdated = await revisionService.updateStatusFields(
           editingRevisionId.value,
           statusPayload
@@ -671,9 +631,6 @@ const submitRevision = async (vehicle) => {
     return
   }
 
-  // --- modo criação: envia tudo, incluindo status/status_pagamento, já que
-  // esses campos agora também aparecem (com os defaults aberto/pendente,
-  // ou o que o usuário escolher) no formulário de criação ---
   isSubmitting.value = true
   try {
     const payload = {
@@ -690,10 +647,6 @@ const submitRevision = async (vehicle) => {
 
     const rawCreated = await revisionService.create(payload)
     const createdRaw = rawCreated?.data ?? rawCreated
-    // 🔴 AQUI — fallback: se o backend não validar/devolver status e
-    // status_pagamento na resposta da criação (por isso a tabela mostrava
-    // status vazio mesmo enviando certo), usa o que foi escolhido no
-    // formulário. Se o backend já devolver certinho, o valor dele prevalece.
     const created = {
       ...createdRaw,
       status: createdRaw?.status ?? formData.status,
@@ -714,7 +667,6 @@ const submitRevision = async (vehicle) => {
   }
 }
 
-// --- Delete flow: abre o ConfirmModal padrão, igual ao usado na tela de pessoas ---
 const askDelete = (vehicleId, revision) => {
   revisionToDelete.value = { vehicleId, revision }
 }
@@ -739,6 +691,12 @@ const confirmDelete = async () => {
     }
     toast.success('Revisão removida com sucesso!')
     revisionToDelete.value = null
+
+    // 🔴 AQUI — se essa era a última revisão da pessoa (em todos os veículos),
+    // reabre o formulário de criação sozinho, igual ao comportamento inicial
+    if (totalRevisionsCount.value === 0) {
+      openCreateFormIfEmpty()
+    }
   } catch (err) {
     console.error('Erro ao excluir revisão:', err.response?.data ?? err)
     deleteErrorByVehicle[vehicleId] =
@@ -749,7 +707,6 @@ const confirmDelete = async () => {
   }
 }
 
-// Fecha esse modal e pede pro componente pai abrir o modal de cadastro de veículo
 const goToVehicleRegistration = () => {
   emit('register-vehicle')
 }
@@ -757,6 +714,7 @@ const goToVehicleRegistration = () => {
 onMounted(async () => {
   await loadAll()
   openHighlightedForEdit()
+  openCreateFormIfEmpty()
 })
 </script>
 
@@ -782,11 +740,8 @@ onMounted(async () => {
       </button>
     </div>
 
-    <!-- mobile-first: max-h menor em telas pequenas (menos chrome de teclado/URL bar
-         disputando espaço), cresce a partir do sm -->
     <div v-else class="flex max-h-[75vh] flex-col gap-6 overflow-y-auto pr-1 sm:max-h-[70vh]">
       <div v-for="vehicle in vehicles" :key="vehicle.id">
-        <!-- Cabeçalho do veículo: empilha em telas muito estreitas, vira linha a partir do sm -->
         <div class="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div class="flex min-w-0 items-center gap-2">
             <Car :size="16" class="shrink-0 text-ink-500" />
@@ -815,12 +770,6 @@ onMounted(async () => {
           {{ deleteErrorByVehicle[vehicle.id] }}
         </p>
 
-        <!-- 🔴 AQUI — bloco unificado: quando o formulário (criação OU edição)
-             está aberto, o formulário e a lista de revisões desse veículo
-             ficam dentro de UM único enquadramento (borda preta), como um
-             bloco só — "os dados que vamos editar" em cima e "a revisão" logo
-             abaixo, sem cores diferentes por modo. Quando não há formulário
-             aberto, este div fica transparente (sem borda/padding). -->
         <div
           :class="openFormVehicleId === vehicle.id
             ? 'rounded-2xl border-2 border-ink-900 bg-white p-3 shadow-sm sm:p-4'
@@ -846,9 +795,6 @@ onMounted(async () => {
                     <component :is="formMode === 'edit' ? Pencil : Plus" :size="13" />
                     {{ formMode === 'edit' ? 'Editando revisão' : 'Nova revisão' }}
                   </p>
-                  <!-- 🔴 AQUI — referência fixa da revisão em edição, pra deixar
-                       claro qual delas está sendo alterada, já que a linha
-                       original some da lista abaixo enquanto isso -->
                   <p
                     v-if="formMode === 'edit' && editingRevisionLabel"
                     class="w-fit truncate rounded-md bg-ink-100 px-2 py-1 text-[11px] font-medium text-orange-600"
@@ -861,7 +807,6 @@ onMounted(async () => {
                 </p>
               </div>
 
-              <!-- mobile-first: 1 coluna por padrão, 2 a partir do sm, 4 a partir do md -->
               <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
                 <div class="sm:col-span-2 md:col-span-4">
                   <div class="mb-1 flex items-center justify-between">
@@ -896,7 +841,6 @@ onMounted(async () => {
                   <input
                     v-model="formData.revision_date"
                     type="date"
-                    :max="maxRevisionDate"
                     class="w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-ink-900 focus:outline-none focus:ring-1 sm:py-2"
                     :class="fieldErrors.revision_date
                       ? 'border-red-400 focus:border-red-500 focus:ring-red-400'
@@ -985,16 +929,13 @@ onMounted(async () => {
                   </p>
                 </div>
 
-                <!-- 🔴 AQUI — status e status de pagamento agora aparecem SEMPRE
-                     (criação e edição), já nascendo com os defaults do banco
-                     (aberto/pendente) na criação. -->
                 <div>
                   <label class="mb-1 block text-xs font-medium text-ink-600">Status</label>
                   <select
                     v-model="formData.status"
                     class="w-full rounded-lg border border-ink-200 bg-white px-3 py-2.5 text-sm text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 sm:py-2"
                   >
-                    <option v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                    <option v-for="opt in statusOptionsForForm" :key="opt.value" :value="opt.value">
                       {{ opt.label }}
                     </option>
                   </select>
@@ -1013,8 +954,6 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <!-- Ações do formulário: empilha e ocupa a largura toda no mobile,
-                   vira linha alinhada à direita a partir do sm -->
               <div class="mt-3 flex flex-col gap-3 border-t border-ink-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
                 <p v-if="formError" class="flex items-start gap-1 text-xs text-red-600 sm:mr-auto sm:items-center" role="alert">
                   <AlertCircle :size="13" class="mt-0.5 shrink-0 sm:mt-0" />
@@ -1042,7 +981,6 @@ onMounted(async () => {
             </form>
           </Transition>
 
-          <!-- Sem revisões (ou a única revisão está sendo editada acima) -->
           <div
             v-if="!visibleRevisions(vehicle.id).length"
             class="rounded-xl border border-ink-100 px-3 py-4 text-center text-xs text-ink-400"
@@ -1055,7 +993,6 @@ onMounted(async () => {
           </div>
 
           <template v-else>
-            <!-- ===== MOBILE (< sm): lista de cards em vez de tabela ===== -->
             <div class="flex flex-col gap-2 sm:hidden">
               <div
                 v-for="revision in visibleRevisions(vehicle.id)"
@@ -1089,9 +1026,6 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                <!-- 🔴 AQUI — badges de status e pagamento, agora rotulados
-                     ("Status:" / "Pagamento:") pra não serem confundidos —
-                     mesmo padrão visual usado em Data/KM/Custo abaixo. -->
                 <div class="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   <div class="flex items-center gap-1">
                     <span class="text-ink-400">Status:</span>
@@ -1137,7 +1071,6 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- ===== DESKTOP (>= sm): tabela original ===== -->
             <div class="hidden overflow-x-auto rounded-xl border border-ink-100 sm:block">
               <table class="w-full min-w-[640px] text-left text-xs">
                 <thead class="bg-ink-50 text-ink-500">
@@ -1222,8 +1155,6 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 🔴 AQUI — mesmo ConfirmModal padrão usado em Pessoas, em vez da
-         confirmação inline minimalista de antes -->
     <ConfirmModal
       v-if="revisionToDelete"
       title="Remover revisão"
