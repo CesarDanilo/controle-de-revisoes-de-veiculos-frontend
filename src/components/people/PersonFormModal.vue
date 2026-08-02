@@ -42,22 +42,16 @@ const form = reactive({
   birth_date: props.person?.birth_date ?? '',
 })
 
-// ---- Guarda o documento digitado em cada aba (PF/PJ) para não perder ao alternar ----
 const documentByType = reactive({
   PF: personType.value === 'PF' ? form.document : '',
   PJ: personType.value === 'PJ' ? form.document : '',
 })
 
-// ---- Guarda os campos exclusivos de PF (data de nascimento e gênero) ----
 const pfFieldsCache = reactive({
   birth_date: personType.value === 'PF' ? form.birth_date : '',
   gender: personType.value === 'PF' ? form.gender : 'O',
 })
-// ------------------------------------------------------------------------------------
 
-// O snapshot precisa ser normalizado do mesmo jeito que buildComparablePayload():
-// para PJ, gender/birth_date não existem, então precisam nascer como null/''
-// aqui também — senão a comparação nunca bate e o botão fica sempre liberado.
 const originalSnapshot = isEditing
   ? {
       name: form.name.trim(),
@@ -80,19 +74,15 @@ function buildComparablePayload() {
   }
 }
 
-// ---- Reativo: reflete se algo mudou em relação ao snapshot original ----
-// Usado tanto no botão (isSubmitDisabled) quanto no handleSubmit.
 const formHasChanges = computed(() => {
   if (!originalSnapshot) return true
   const current = buildComparablePayload()
   return Object.keys(current).some((key) => current[key] !== originalSnapshot[key])
 })
-// ------------------------------------------------------------------------
 
 const fieldErrors = ref({})
 const isSubmitting = ref(false)
 
-// 🔴 AQUI — limpa o erro de um campo específico (usado ao digitar, pra sumir o alerta antes do próximo blur)
 function clearFieldError(field) {
   if (fieldErrors.value[field]) {
     const updated = { ...fieldErrors.value }
@@ -105,14 +95,13 @@ const phoneModel = computed({
   get: () => maskPhone(form.phone),
   set: (val) => {
     form.phone = val.replace(/\D/g, '').slice(0, 11)
-    clearFieldError('phone') // 🔴 AQUI
+    clearFieldError('phone')
   },
 })
 
 function selectPersonType(type) {
   if (personType.value === type) return
 
-  // salva o que estava digitado na aba que está sendo deixada
   documentByType[personType.value] = form.document
   if (personType.value === 'PF') {
     pfFieldsCache.birth_date = form.birth_date
@@ -121,7 +110,6 @@ function selectPersonType(type) {
 
   personType.value = type
 
-  // restaura o que já tinha sido digitado nessa aba, se houver
   form.document = documentByType[type] ?? ''
   fieldErrors.value.document = undefined
   resetCpfValidation()
@@ -133,7 +121,6 @@ function selectPersonType(type) {
     form.gender = 'O'
     fieldErrors.value.gender = undefined
   } else {
-    // voltando para PF: restaura o que estava salvo
     form.birth_date = pfFieldsCache.birth_date
     form.gender = pfFieldsCache.gender
   }
@@ -156,9 +143,8 @@ const documentModel = computed({
   get: () => (personType.value === 'PJ' ? maskCNPJ(form.document) : maskCPF(form.document)),
   set: (val) => {
     form.document = val.replace(/\D/g, '').slice(0, DOCUMENT_MAX_LENGTH.value)
-    // mantém o cache sempre sincronizado com o que está sendo digitado
     documentByType[personType.value] = form.document
-    clearFieldError('document') // 🔴 AQUI
+    clearFieldError('document')
   },
 })
 
@@ -176,10 +162,9 @@ const sanitizeBirthDateYear = () => {
     const fixedYear = year.slice(0, 4)
     form.birth_date = [fixedYear, month, day].filter(Boolean).join('-')
   }
-  clearFieldError('birth_date') // 🔴 AQUI
+  clearFieldError('birth_date')
 }
 
-// ---- Validação de e-mail via Abstract API ----
 const {
   status: emailStatus,
   message: emailValidationMessage,
@@ -226,7 +211,7 @@ watch(
     if (emailStatus.value !== 'idle') {
       resetEmailValidation()
     }
-    clearFieldError('email') // 🔴 AQUI
+    clearFieldError('email')
     if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
     emailDebounceTimer = setTimeout(() => runEmailValidation(newEmail), EMAIL_DEBOUNCE_MS)
   }
@@ -238,7 +223,6 @@ function handleEmailBlur() {
     emailDebounceTimer = null
   }
 
-  // 🔴 AQUI — feedback de campo obrigatório ao sair do campo vazio
   if (form.email.trim() === '') {
     fieldErrors.value = { ...fieldErrors.value, email: ['Informe o e-mail.'] }
     resetEmailValidation()
@@ -247,24 +231,21 @@ function handleEmailBlur() {
 
   runEmailValidation(form.email)
 }
-// ------------------------------------------------
 
 // ---- Validação de CPF via CPFHub ----
 const {
   status: cpfStatus,
   message: cpfValidationMessage,
+  data: cpfData,
   checkCpf,
   reset: resetCpfValidation,
 } = useCpfValidation()
 
 const cpfCheckSkippable = computed(() => {
-  // só se aplica a Pessoa Física; PJ (CNPJ) não passa por essa validação
   if (personType.value !== 'PF') return true
   return isEditing && form.document === originalSnapshot?.document
 })
 
-// Bloqueia o submit apenas se a API confirmou que o CPF NÃO existe.
-// Se a API falhar (status 'error'), não bloqueia — só a validação mod-11 local vale.
 const isCpfVerified = computed(() => {
   if (cpfCheckSkippable.value) return true
   return cpfStatus.value !== 'invalid'
@@ -297,6 +278,44 @@ function runCpfValidation(rawDocument) {
   checkCpf(digits)
 }
 
+// 🔴 AQUI — converte "DD/MM/AAAA" (formato da CPFHub) pra "AAAA-MM-DD" (formato do input date)
+function convertBrDateToISO(brDate) {
+  if (!brDate) return ''
+  const [day, month, year] = brDate.split('/')
+  if (!day || !month || !year) return ''
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+}
+
+// 🔴 AQUI — assim que o CPF é confirmado como válido, sobrescreve Nome, Data de
+// nascimento e Gênero com o que veio da API, não importa o que já estava no formulário
+function applyCpfData(result) {
+  if (personType.value !== 'PF') return
+
+  if (result.name) {
+    form.name = result.name.slice(0, NAME_MAX_LENGTH)
+    clearFieldError('name')
+  }
+
+  if (result.birth_date) {
+    form.birth_date = convertBrDateToISO(result.birth_date)
+    pfFieldsCache.birth_date = form.birth_date
+    clearFieldError('birth_date')
+  }
+
+  if (result.gender === 'M' || result.gender === 'F') {
+    form.gender = result.gender
+    pfFieldsCache.gender = form.gender
+    clearFieldError('gender')
+  }
+}
+
+watch(cpfStatus, (newStatus) => {
+  if (newStatus === 'valid' && cpfData.value) {
+    applyCpfData(cpfData.value)
+  }
+})
+// ------------------------------------------------------------
+
 watch(
   () => form.document,
   (newDocument) => {
@@ -312,7 +331,6 @@ watch(
 )
 
 function handleDocumentBlur() {
-  // 🔴 AQUI — feedback de campo obrigatório ao sair do campo vazio
   if (form.document.trim() === '') {
     fieldErrors.value = {
       ...fieldErrors.value,
@@ -337,7 +355,6 @@ function handleDocumentBlur() {
     runCnpjValidation(form.document)
   }
 }
-// ------------------------------------------------
 
 // ---- Validação de CNPJ via BrasilAPI ----
 const {
@@ -348,13 +365,10 @@ const {
 } = useCnpjValidation()
 
 const cnpjCheckSkippable = computed(() => {
-  // só se aplica a Pessoa Jurídica; PF (CPF) não passa por essa validação
   if (personType.value !== 'PJ') return true
   return isEditing && form.document === originalSnapshot?.document
 })
 
-// Mesma regra do CPF: só bloqueia o submit se a API confirmou que o CNPJ
-// NÃO existe. Se a API falhar (status 'error'), não bloqueia.
 const isCnpjVerified = computed(() => {
   if (cnpjCheckSkippable.value) return true
   return cnpjStatus.value !== 'invalid'
@@ -402,7 +416,6 @@ watch(
 )
 // ------------------------------------------------
 
-// 🔴 AQUI — feedback de campo obrigatório pra Nome e Telefone (não têm validação remota, só precisam do alerta no blur)
 function handleNameBlur() {
   if (form.name.trim() === '') {
     fieldErrors.value = {
@@ -423,7 +436,6 @@ function handleBirthDateBlur() {
     fieldErrors.value = { ...fieldErrors.value, birth_date: ['Informe a data de nascimento.'] }
   }
 }
-// ------------------------------------------------
 
 onBeforeUnmount(() => {
   if (emailDebounceTimer) clearTimeout(emailDebounceTimer)
@@ -498,9 +510,6 @@ const handleSubmit = async () => {
   }
 }
 
-// botão só libera se: não está enviando, email não está "checking",
-// email verificado, CPF/CNPJ não está "checking", CPF/CNPJ verificado,
-// e — se estiver editando — algo realmente mudou em relação ao original
 const isSubmitDisabled = computed(() => {
   return (
     isSubmitting.value ||
@@ -563,7 +572,7 @@ const sanitizeNameLength = () => {
   if (form.name.length > NAME_MAX_LENGTH) {
     form.name = form.name.slice(0, NAME_MAX_LENGTH)
   }
-  clearFieldError('name') // 🔴 AQUI
+  clearFieldError('name')
 }
 
 const sanitizeEmailLength = () => {
