@@ -675,6 +675,7 @@ const handleLicensePlatePaste = (event) => {
               <button
                 v-if="!isCreatingBrand"
                 type="button"
+                tabindex="-1"
                 class="flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
                 @click="openBrandCreation"
               >
@@ -780,6 +781,7 @@ const handleLicensePlatePaste = (event) => {
                 <button
                   v-if="!isCreatingColor"
                   type="button"
+                  tabindex="-1"
                   class="flex items-center gap-1 text-xs font-medium text-brand-600 transition-colors hover:text-brand-700"
                   @click="openColorCreation"
                 >
