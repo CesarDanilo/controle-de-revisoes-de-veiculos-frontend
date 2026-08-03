@@ -17,13 +17,14 @@ export const reportService = {
   // Revisões
   revisionsByPeriod: (start, end, page = 1) =>
     api.get('/reports/revisions', { params: { start, end, page } }).then((r) => r.data), // paginado
-  // 🟢 NOVO — resumo agregado (COUNT/SUM) do período, sem paginação.
-  // Usado pelos KPI cards, que não podem depender de .length de uma
-  // página só (15 itens) quando pode haver centenas/milhares de revisões.
   revisionsPeriodSummary: (start, end) =>
     api.get('/reports/revisions/summary', { params: { start, end } }).then((r) => r.data),
-  brandsRevisionRanking: () => api.get('/reports/revisions/brands-ranking').then((r) => r.data),
-  peopleRevisionRanking: () => api.get('/reports/revisions/people-ranking').then((r) => r.data),
+  // 🔧 CORRIGIDO — agora aceita start/end e repassa pro backend, que já
+  // sabia filtrar por período mas nunca recebia os parâmetros.
+  brandsRevisionRanking: (start = '', end = '') =>
+    api.get('/reports/revisions/brands-ranking', { params: { start, end } }).then((r) => r.data),
+  peopleRevisionRanking: (start = '', end = '') =>
+    api.get('/reports/revisions/people-ranking', { params: { start, end } }).then((r) => r.data),
   avgIntervalByPerson: (page = 1) =>
     api.get('/reports/revisions/avg-interval', { params: { page } }).then((r) => r.data), // paginado
   upcomingRevisions: (page = 1) =>

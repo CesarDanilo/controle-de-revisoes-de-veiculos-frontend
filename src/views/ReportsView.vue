@@ -14,11 +14,8 @@ import DoughnutChart from '../components/charts/DoughnutChart.vue'
 import KpiCard from '../components/reports/KpiCard.vue'
 import RankingList from '../components/reports/RankingList.vue'
 import UpcomingRevisionsPanel from '../components/reports/UpcomingRevisionsPanel.vue'
-// 🔴 AQUI — mesmo modal já usado na tela de Pessoas e no painel de "Próximas revisões"
 import RevisionsModal from '../components/people/RevisionsModal.vue'
-// 🔴 AQUI — mesmo modal de cadastro/edição de pessoa usado na tela de Pessoas
 import PersonFormModal from '../components/people/PersonFormModal.vue'
-// 🔴 AQUI — mesmo modal de veículos (lista + cadastro/edição) usado na tela de Pessoas
 import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import { useReports } from '../composables/useReports'
 import { usePeople } from '../composables/usePeople'
@@ -28,7 +25,7 @@ import { maskPhone } from '../utils/masks'
 
 const {
   data,
-  revisionsSummary, // 🟢 NOVO — resumo agregado (COUNT/SUM) do período, usado pelos KPIs
+  revisionsSummary,
   pagination,
   tableLoading,
   isLoading,
@@ -39,19 +36,17 @@ const {
   fetchVehiclesByPerson,
   fetchAllPeople,
   fetchRevisionsByPeriod,
-  fetchRevisionsPeriodSummary, // 🟢 NOVO
+  fetchRevisionsPeriodSummary,
+  fetchBrandsRevisionRanking, // 🟢 NOVO — ranking de marcas agora tem fetch próprio, recebendo start/end
+  fetchPeopleRevisionRanking, // 🟢 NOVO — ranking de clientes agora tem fetch próprio, recebendo start/end
   fetchAvgIntervalByPerson,
-  fetchUpcomingRevisions, // 🔧 CORRIGIDO — necessário para paginar todas as páginas na exportação
+  fetchUpcomingRevisions,
 } = useReports()
 
-// 🔴 AQUI — usado apenas para salvar a edição de pessoa aberta a partir dos relatórios
 const { updatePerson } = usePeople()
 const toast = useToast()
 const route = useRoute()
 
-// 🟢 NOVO — geração de PDF vetorial (texto/tabelas reais), sem captura de
-// tela. Substitui completamente o antigo fluxo com html2canvas, que
-// quebrava (paginação capturada, componentes cortados/não renderizados).
 const { exportOverview, exportTable, exportMultiTable, exportFullReport } = useReportPdf()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
@@ -74,7 +69,7 @@ const toISODate = (date) => {
 // ---- Rótulo de gênero com 3 categorias (M / F / Outros) ----
 const GENDER_ORDER = ['M', 'F', 'OTHERS']
 const GENDER_LABELS = { M: 'Homens', F: 'Mulheres', OTHERS: 'Outros' }
-const GENDER_COLORS = { M: '#6366f1', F: '#f472b6', OTHERS: '#94a3b8' } // slate neutro pra "Outros"
+const GENDER_COLORS = { M: '#6366f1', F: '#f472b6', OTHERS: '#94a3b8' }
 
 const normalizeGenderKey = (code) => (code === 'M' || code === 'F' ? code : 'OTHERS')
 
@@ -111,9 +106,20 @@ const activePreset = ref('30d')
 const periodStart = ref('')
 const periodEnd = ref('')
 
-// 🔧 CORRIGIDO — dispara também fetchRevisionsPeriodSummary junto com a
-// tabela paginada, garantindo que os KPIs reflitam o total real do
-// período, não só os 15 itens da página atual.
+// 🟢 NOVO — rótulo dinâmico do período, usado nos painéis de ranking em
+// vez do texto fixo "Todos os períodos" (que agora seria enganoso, já
+// que os rankings passaram a respeitar o filtro).
+const periodLabel = computed(() => {
+  const preset = PRESETS.find((p) => p.key === activePreset.value)
+  if (preset && preset.key !== 'custom') return preset.label
+  if (periodStart.value && periodEnd.value) {
+    return `${formatDateBR(periodStart.value)} a ${formatDateBR(periodEnd.value)}`
+  }
+  return 'Período selecionado'
+})
+
+// 🔧 CORRIGIDO — dispara também os rankings de marcas/clientes junto com
+// a tabela e o summary, garantindo que reflitam o período selecionado.
 const applyPreset = (preset) => {
   activePreset.value = preset.key
   if (preset.key === 'custom') return
@@ -126,12 +132,16 @@ const applyPreset = (preset) => {
   periodEnd.value = toISODate(end)
   fetchRevisionsByPeriod(periodStart.value, periodEnd.value, 1)
   fetchRevisionsPeriodSummary(periodStart.value, periodEnd.value)
+  fetchBrandsRevisionRanking(periodStart.value, periodEnd.value)
+  fetchPeopleRevisionRanking(periodStart.value, periodEnd.value)
 }
 
 const applyCustomPeriod = () => {
   activePreset.value = 'custom'
   fetchRevisionsByPeriod(periodStart.value, periodEnd.value, 1)
   fetchRevisionsPeriodSummary(periodStart.value, periodEnd.value)
+  fetchBrandsRevisionRanking(periodStart.value, periodEnd.value)
+  fetchPeopleRevisionRanking(periodStart.value, periodEnd.value)
 }
 
 // ---------------------------------------------------------------------
@@ -147,7 +157,7 @@ const loadAll = async () => {
   await Promise.all([
     fetchVehicleReports(),
     fetchPeopleReports(),
-    fetchRevisionReports(periodStart.value, periodEnd.value), // já dispara o summary internamente
+    fetchRevisionReports(periodStart.value, periodEnd.value), // já dispara summary e rankings internamente
     fetchAvgIntervalByPerson(),
   ])
 }
@@ -171,7 +181,7 @@ watch(isExportingSection, (newVal, oldVal) => {
   if (startedExporting) {
     frozenSnapshot.value = {
       revisionsByPeriod: data.value.revisionsByPeriod.map((row) => ({ ...row })),
-      revisionsSummary: { ...revisionsSummary.value }, // 🟢 NOVO — congela o summary também
+      revisionsSummary: { ...revisionsSummary.value },
       allPeople: data.value.allPeople.map((row) => ({ ...row })),
       vehiclesByPerson: data.value.vehiclesByPerson.map((row) => ({ ...row })),
       avgIntervalByPerson: data.value.avgIntervalByPerson.map((row) => ({ ...row })),
@@ -197,7 +207,6 @@ const displayData = computed(() => frozenSnapshot.value ?? {
   upcomingRevisions: data.value.upcomingRevisions,
 })
 
-// 🟢 NOVO — o summary exibido também respeita o congelamento durante export
 const displayRevisionsSummary = computed(() => frozenSnapshot.value?.revisionsSummary ?? revisionsSummary.value)
 
 const displayPagination = computed(() => frozenSnapshot.value?.pagination ?? pagination)
@@ -214,15 +223,6 @@ const handleAvgIntervalPage = (page) => fetchAvgIntervalByPerson(page)
 // ---------------------------------------------------------------------
 // KPIs
 // ---------------------------------------------------------------------
-// 🔧 CORRIGIDO — CAUSA RAIZ DO BUG: antes esses KPIs eram calculados
-// fazendo .length / .reduce() / new Set() em cima de
-// displayData.value.revisionsByPeriod, que é SÓ A PÁGINA ATUAL (15 itens
-// por padrão). Com dezenas de páginas de revisões, os cards sempre
-// mostravam no máximo 15 — mesmo aplicando o filtro de data corretamente
-// (o filtro funcionava, mas o cálculo nunca via mais que uma página).
-// Agora lêem direto de displayRevisionsSummary, que vem do endpoint
-// dedicado revisionsPeriodSummary (COUNT/SUM/COUNT DISTINCT calculados no
-// banco), refletindo sempre o total real do período filtrado.
 const kpiTotalRevisoes = computed(() => displayRevisionsSummary.value.total_revisions)
 const kpiVeiculosAtendidos = computed(() => displayRevisionsSummary.value.vehicles_count)
 const kpiClientesAtendidos = computed(() => displayRevisionsSummary.value.people_count)
@@ -234,13 +234,6 @@ const kpiTicketMedio = computed(() =>
 const formatCurrency = (value) =>
   Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-// 🔧 CORRIGIDO — mesma causa raiz do bug já corrigido em useUpcomingRevisions.js:
-// esta função duplica a classificação de status localmente, e tinha o
-// mesmo problema — nenhum caso para "hoje" (data === hoje), então revisões
-// de hoje caíam em 'soon' e apareciam com o rótulo "Esta semana" em vez de
-// "Hoje". Também zera a hora de `predicted` antes de comparar, senão
-// `predicted.getTime() === today.getTime()` nunca bate (a data vinda da
-// API pode trazer horário diferente de meia-noite).
 const buildUpcomingWithStatus = (rows) => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -270,10 +263,6 @@ const buildUpcomingWithStatus = (rows) => {
 
 const upcomingWithStatus = computed(() => buildUpcomingWithStatus(displayData.value.upcomingRevisions))
 
-// 🔧 CORRIGIDO — inclui o novo status 'today' na contagem. Sem isso, as
-// revisões previstas para hoje (que antes eram contadas como 'soon')
-// sumiriam do card "Próximas revisões" assim que 'today' passou a existir
-// como status próprio.
 const kpiProximasRevisoes = computed(
   () => upcomingWithStatus.value.filter(
     (r) => r.status === 'overdue' || r.status === 'today' || r.status === 'soon'
@@ -802,7 +791,6 @@ const activeTabExportLabel = computed(() => {
   if (activeDetailTab.value === 'people') return 'Pessoas'
   return 'Revisões'
 })
-// --- fim exportação PDF ---
 
 onMounted(loadAll)
 </script>
@@ -920,11 +908,11 @@ onMounted(loadAll)
 
         <!-- ====== RANKINGS ====== -->
         <div class="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <ReportPanel title="Marcas com mais revisões" description="Todos os períodos">
+          <ReportPanel title="Marcas com mais revisões" :description="periodLabel">
             <RankingList :items="brandsRevisionItems" accent-class="bg-green-500" />
           </ReportPanel>
 
-          <ReportPanel title="Clientes mais frequentes" description="Todos os períodos">
+          <ReportPanel title="Clientes mais frequentes" :description="periodLabel">
             <RankingList :items="peopleRevisionItems" accent-class="bg-amber-500" />
           </ReportPanel>
         </div>

@@ -3,8 +3,6 @@ import { reportService } from '../services/report.service'
 
 const emptyMeta = () => ({ currentPage: 1, lastPage: 1, perPage: 15, total: 0 })
 
-// Extrai itens + metadados de uma resposta de paginate() padrão do Laravel
-// (formato "flat": { current_page, data, last_page, per_page, total, ... })
 function extractPage(response) {
   return {
     items: response?.data ?? [],
@@ -36,9 +34,6 @@ export function useReports() {
     upcomingRevisions: [],
   })
 
-  // 🟢 NOVO — resumo agregado do período (KPIs), separado de "data" porque
-  // não é uma lista paginada, é um objeto único com totais já calculados
-  // no banco (COUNT/SUM/COUNT DISTINCT via revisionsPeriodSummary).
   const revisionsSummary = ref({
     total_revisions: 0,
     vehicles_count: 0,
@@ -46,7 +41,6 @@ export function useReports() {
     total_cost: 0,
   })
 
-  // Metadados de paginação de cada recurso paginado
   const pagination = reactive({
     vehiclesByPerson: emptyMeta(),
     allPeople: emptyMeta(),
@@ -55,7 +49,6 @@ export function useReports() {
     upcomingRevisions: emptyMeta(),
   })
 
-  // Loading isolado por tabela, pra trocar de página sem travar o dashboard inteiro
   const tableLoading = reactive({
     vehiclesByPerson: false,
     allPeople: false,
@@ -63,10 +56,14 @@ export function useReports() {
     avgIntervalByPerson: false,
     upcomingRevisions: false,
     revisionsSummary: false,
+    // 🟢 NOVO — loading isolado dos rankings, que agora recarregam a
+    // cada troca de período
+    brandsRevisionRanking: false,
+    peopleRevisionRanking: false,
   })
 
   // ---------------------------------------------------------------------
-  // FETCHERS INDIVIDUAIS (cada um busca 1 página de 1 recurso)
+  // FETCHERS INDIVIDUAIS
   // ---------------------------------------------------------------------
   async function fetchVehiclesByPerson(page = 1) {
     tableLoading.vehiclesByPerson = true
@@ -110,9 +107,6 @@ export function useReports() {
     }
   }
 
-  // 🟢 NOVO — busca o resumo agregado (KPIs) do período. Independente da
-  // paginação de revisionsByPeriod: sempre reflete o TOTAL real, não a
-  // página atual.
   async function fetchRevisionsPeriodSummary(start = '', end = '') {
     tableLoading.revisionsSummary = true
     try {
@@ -122,6 +116,30 @@ export function useReports() {
       errorMessage.value = 'Não foi possível carregar o resumo de revisões do período.'
     } finally {
       tableLoading.revisionsSummary = false
+    }
+  }
+
+  // 🟢 NOVO — busca isolada do ranking de marcas, agora recebendo start/end
+  async function fetchBrandsRevisionRanking(start = '', end = '') {
+    tableLoading.brandsRevisionRanking = true
+    try {
+      data.value.brandsRevisionRanking = await reportService.brandsRevisionRanking(start, end)
+    } catch {
+      errorMessage.value = 'Não foi possível carregar o ranking de marcas.'
+    } finally {
+      tableLoading.brandsRevisionRanking = false
+    }
+  }
+
+  // 🟢 NOVO — busca isolada do ranking de clientes, agora recebendo start/end
+  async function fetchPeopleRevisionRanking(start = '', end = '') {
+    tableLoading.peopleRevisionRanking = true
+    try {
+      data.value.peopleRevisionRanking = await reportService.peopleRevisionRanking(start, end)
+    } catch {
+      errorMessage.value = 'Não foi possível carregar o ranking de clientes.'
+    } finally {
+      tableLoading.peopleRevisionRanking = false
     }
   }
 
@@ -154,7 +172,7 @@ export function useReports() {
   }
 
   // ---------------------------------------------------------------------
-  // FETCHERS EM GRUPO (carga inicial de cada seção)
+  // FETCHERS EM GRUPO
   // ---------------------------------------------------------------------
   async function fetchVehicleReports() {
     isLoading.value = true
@@ -192,20 +210,16 @@ export function useReports() {
     }
   }
 
-  // 🔧 CORRIGIDO — agora também dispara fetchRevisionsPeriodSummary junto
-  // com os outros fetchers do período, garantindo que os KPIs sempre
-  // reflitam o total agregado, não a página atual da tabela.
+  // 🔧 CORRIGIDO — brandsRevisionRanking e peopleRevisionRanking agora
+  // recebem start/end e são recarregados junto com o resto do período,
+  // em vez de serem buscados uma única vez sem filtro nenhum.
   async function fetchRevisionReports(start = '', end = '') {
     isLoading.value = true
     errorMessage.value = ''
     try {
-      const [brands, people] = await Promise.all([
-        reportService.brandsRevisionRanking(),
-        reportService.peopleRevisionRanking(),
-      ])
-      data.value.brandsRevisionRanking = brands
-      data.value.peopleRevisionRanking = people
       await Promise.all([
+        fetchBrandsRevisionRanking(start, end),
+        fetchPeopleRevisionRanking(start, end),
         fetchRevisionsByPeriod(start, end, 1),
         fetchRevisionsPeriodSummary(start, end),
         fetchAvgIntervalByPerson(1),
@@ -232,6 +246,8 @@ export function useReports() {
     fetchAllPeople,
     fetchRevisionsByPeriod,
     fetchRevisionsPeriodSummary,
+    fetchBrandsRevisionRanking,
+    fetchPeopleRevisionRanking,
     fetchAvgIntervalByPerson,
     fetchUpcomingRevisions,
   }
