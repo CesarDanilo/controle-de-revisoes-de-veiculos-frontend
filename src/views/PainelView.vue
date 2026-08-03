@@ -49,12 +49,16 @@ watch(summaryError, (err) => {
 // summary em vez de listas completas.
 const isLoading = computed(() => peopleLoading.value || summaryLoading.value)
 
-// 🟢 ALTERADO — cada card agora só leva um link interno "Ver relatório"
-// (renderizado pelo próprio StatCard via prop "to"), não o card inteiro
-// clicável. As âncoras "#aba-*" trocam a aba de detalhe ativa em
-// ReportsView.vue antes de rolar (ver TAB_HASH_MAP lá); "#secao-financeiro"
-// é seção fixa, mesmo padrão de sempre.
-//
+// 🟢 NOVO — critério pra decidir entre "onboarding" ou "painel normal": o
+// básico pra sair do estado zerado é ter pelo menos UM proprietário
+// cadastrado (é o primeiro passo do fluxo people → veículo → revisão).
+// Enquanto isso não existir, o painel de KPIs/próximas revisões não teria
+// números relevantes pra mostrar mesmo, então priorizamos o guia de
+// onboarding em vez de cards zerados.
+const hasPeople = computed(() => (summary.value?.people_count ?? 0) > 0)
+const hasVehicles = computed(() => (summary.value?.vehicles_count ?? 0) > 0)
+const hasRevisions = computed(() => (summary.value?.revisions_count ?? 0) > 0)
+
 // 🔧 CORRIGIDO — "Revisões" antes apontava pra "#proximas-revisoes" (painel
 // de alertas lá em cima), mas esse card mostra a CONTAGEM TOTAL de
 // revisões, então o destino correto é a tabela detalhada de revisões
@@ -90,7 +94,7 @@ const stats = computed(() => [
   },
 ])
 
-// Estado do modal de revisões (VehicleRevisionsModal exige "person" + aceita
+// Estado do modal de revisões (RevisionsModal exige "person" + aceita
 // highlightVehicleId/highlightRevisionId opcionais)
 const showRevisionsModal = ref(false)
 const selectedPerson = ref(null)
@@ -128,7 +132,7 @@ const closeRevisionsModal = () => {
   highlightRevisionId.value = null
 }
 
-// Disparado pelo próprio VehicleRevisionsModal (@register-vehicle) quando a
+// Disparado pelo próprio RevisionsModal (@register-vehicle) quando a
 // pessoa não tem veículo nenhum ainda e clica em "Cadastrar veículo"
 const openVehicleFormFromRevisions = () => {
   showRevisionsModal.value = false
@@ -143,6 +147,11 @@ const closeVehicleFormModal = () => {
 
 <template>
   <AppShell title="Painel" subtitle="Visão geral do sistema.">
+    <!-- 🔧 CORRIGIDO — GettingStartedCard estava sendo renderizado dentro do
+         slot #actions (o slot de botões ao lado do título no AppShell), o
+         que não fazia sentido pra um card grande de onboarding. Removido
+         daqui; agora vive no corpo da página, condicionado ao estado dos
+         dados (ver abaixo). -->
     <template #actions>
       <router-link to="/people">
         <BaseButton variant="outline">Proprietários</BaseButton>
@@ -152,26 +161,41 @@ const closeVehicleFormModal = () => {
       </router-link>
     </template>
 
-    <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      <StatCard
-        v-for="stat in stats"
-        :key="stat.label"
-        :label="stat.label"
-        :value="stat.value"
-        :icon="stat.icon"
-        :loading="stat.loading"
-        :to="stat.to"
-      />
-    </section>
+    <!-- 🟢 NOVO — ONBOARDING: exibido só enquanto não houver nenhum
+         proprietário cadastrado (o básico pro fluxo pessoa → veículo →
+         revisão fazer sentido). Evita mostrar KPIs zerados e "Próximas
+         revisões" vazio pra quem está chegando agora no sistema; o card
+         guia exatamente o primeiro passo (cadastrar um proprietário).
+         Durante o carregamento inicial (isLoading), não decidimos ainda —
+         evita um "flash" trocando de onboarding pra painel normal assim
+         que os dados chegam. -->
+    <GettingStartedCard
+      v-if="!isLoading && !hasPeople"
+      :has-people="hasPeople"
+      :has-vehicles="hasVehicles"
+      :has-revisions="hasRevisions"
+    />
 
-    <section class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      <GettingStartedCard
-        :has-people="(summary?.people_count ?? 0) > 0"
-        :has-vehicles="(summary?.vehicles_count ?? 0) > 0"
-        :has-revisions="(summary?.revisions_count ?? 0) > 0"
-      />
+    <!-- 🟢 NOVO — PAINEL NORMAL: assim que existir pelo menos um
+         proprietário, o onboarding some e entram os KPIs + próximas
+         revisões, que synchronize com dados reais. Durante o carregamento
+         inicial também cai aqui, pra manter os esqueletos de loading dos
+         StatCards em vez de piscar o onboarding antes da resposta chegar. -->
+    <template v-else>
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          v-for="stat in stats"
+          :key="stat.label"
+          :label="stat.label"
+          :value="stat.value"
+          :icon="stat.icon"
+          :loading="stat.loading"
+          :to="stat.to"
+        />
+      </section>
+
       <UpcomingRevisionsCard @edit-vehicle="openRevisionsModal" />
-    </section>
+    </template>
 
     <RevisionsModal
       v-if="showRevisionsModal && selectedPerson"

@@ -23,6 +23,8 @@ export const reportService = {
     api.get('/reports/revisions/avg-interval', { params: { page } }).then((r) => r.data), // paginado
   upcomingRevisions: (page = 1) =>
     api.get('/reports/revisions/upcoming', { params: { page } }).then((r) => r.data), // paginado
-  getUpcomingRevisions: (params = {}) =>
-    api.get('/reports/revisions/upcoming', { params }).then((res) => res.data.data),
+  getUpcomingRevisions: ({ type = 'upcoming', per_page = 10, page = 1 } = {}) =>
+    api
+      .get('/reports/revisions/upcoming', { params: { type, per_page, page } })
+      .then((res) => res.data),
 }
