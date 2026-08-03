@@ -1,28 +1,25 @@
 <script setup>
-import { computed, ref } from 'vue'
-import { ChevronDown } from '@lucide/vue'
+import { computed } from 'vue'
 
 const props = defineProps({
   items: { type: Array, required: true }, // [{ label, value }]
   accentClass: { type: String, default: 'bg-brand-500' }, // cor da mini-barra
   valueSuffix: { type: String, default: '' },
   emptyLabel: { type: String, default: 'Nenhum dado disponível.' },
-  initialVisible: { type: Number, default: 5 },
-  maxVisible: { type: Number, default: 10 },
+  // altura do container com scroll (em px) — a partir daqui a lista rola
+  maxHeight: { type: Number, default: 280 },
 })
 
-const visibleCount = ref(props.initialVisible)
-
+// 🔧 CORRIGIDO — removida a lógica de "carregar em lotes ao rolar"
+// (visibleCount/batchSize/handleScroll). Como `items` já chega inteiro via
+// prop (não é paginação de API), ela só travava: com poucos itens
+// (ex.: 5) o conteúdo nem preenchia os `maxHeight` px do container, então
+// nunca aparecia barra de rolagem para disparar o carregamento do próximo
+// lote — na prática o usuário nunca via além do "Top 5". Agora a lista
+// inteira (`sorted`) é renderizada de uma vez dentro do container com
+// `overflow-y-auto`; o scroll nativo do navegador mostra o resto.
 const sorted = computed(() => [...props.items].sort((a, b) => b.value - a.value))
 const maxValue = computed(() => Math.max(...sorted.value.map((i) => i.value), 1))
-const displayed = computed(() => sorted.value.slice(0, visibleCount.value))
-const canExpand = computed(
-  () => sorted.value.length > visibleCount.value && visibleCount.value < props.maxVisible
-)
-
-const expand = () => {
-  visibleCount.value = Math.min(props.maxVisible, sorted.value.length)
-}
 
 // Top 3 ganham selo de destaque — reforça hierarquia sem depender só de cor
 const RANK_BADGE = [
@@ -37,41 +34,57 @@ const RANK_BADGE = [
     {{ emptyLabel }}
   </div>
 
-  <ol v-else class="flex flex-col gap-3">
-    <li v-for="(item, index) in displayed" :key="item.label" class="flex items-center gap-3">
-      <span
-        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
-        :class="RANK_BADGE[index] || 'bg-ink-50 text-ink-400'"
-        aria-hidden="true"
-      >
-        {{ index + 1 }}
-      </span>
-
-      <div class="flex min-w-0 flex-1 flex-col gap-1">
-        <div class="flex items-baseline justify-between gap-2">
-          <span class="truncate text-sm font-medium text-ink-800">{{ item.label }}</span>
-          <span class="shrink-0 text-sm font-semibold tabular-nums text-ink-900">
-            {{ item.value }}{{ valueSuffix }}
-          </span>
-        </div>
-        <div class="h-1.5 w-full overflow-hidden rounded-full bg-ink-100">
-          <div
-            class="h-full rounded-full transition-all"
-            :class="accentClass"
-            :style="{ width: `${(item.value / maxValue) * 100}%` }"
-          ></div>
-        </div>
-      </div>
-    </li>
-  </ol>
-
-  <button
-    v-if="canExpand"
-    type="button"
-    class="mt-4 flex items-center gap-1 self-start text-xs font-medium text-brand-600 transition-colors hover:text-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 rounded"
-    @click="expand"
+  <div
+    v-else
+    class="custom-scrollbar overflow-y-auto pr-1"
+    :style="{ maxHeight: `${maxHeight}px` }"
   >
-    Ver Top {{ maxVisible }}
-    <ChevronDown :size="14" />
-  </button>
+    <ol class="flex flex-col gap-3">
+      <li v-for="(item, index) in sorted" :key="item.label" class="flex items-center gap-3">
+        <span
+          class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+          :class="RANK_BADGE[index] || 'bg-ink-50 text-ink-400'"
+          aria-hidden="true"
+        >
+          {{ index + 1 }}
+        </span>
+
+        <div class="flex min-w-0 flex-1 flex-col gap-1">
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="truncate text-sm font-medium text-ink-800">{{ item.label }}</span>
+            <span class="shrink-0 text-sm font-semibold tabular-nums text-ink-900">
+              {{ item.value }}{{ valueSuffix }}
+            </span>
+          </div>
+          <div class="h-1.5 w-full overflow-hidden rounded-full bg-ink-100">
+            <div
+              class="h-full rounded-full transition-all"
+              :class="accentClass"
+              :style="{ width: `${(item.value / maxValue) * 100}%` }"
+            ></div>
+          </div>
+        </div>
+      </li>
+    </ol>
+  </div>
 </template>
+
+<style scoped>
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #d1d1d6;
+  border-radius: 999px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #b5b5bd;
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d1d6 transparent;
+}
+</style>

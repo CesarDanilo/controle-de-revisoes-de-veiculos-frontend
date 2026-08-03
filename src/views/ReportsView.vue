@@ -234,6 +234,13 @@ const kpiTicketMedio = computed(() =>
 const formatCurrency = (value) =>
   Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
+// 🔧 CORRIGIDO — mesma causa raiz do bug já corrigido em useUpcomingRevisions.js:
+// esta função duplica a classificação de status localmente, e tinha o
+// mesmo problema — nenhum caso para "hoje" (data === hoje), então revisões
+// de hoje caíam em 'soon' e apareciam com o rótulo "Esta semana" em vez de
+// "Hoje". Também zera a hora de `predicted` antes de comparar, senão
+// `predicted.getTime() === today.getTime()` nunca bate (a data vinda da
+// API pode trazer horário diferente de meia-noite).
 const buildUpcomingWithStatus = (rows) => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -243,8 +250,11 @@ const buildUpcomingWithStatus = (rows) => {
   return rows
     .map((row) => {
       const predicted = row.predicted_date ? new Date(row.predicted_date) : null
+      if (predicted) predicted.setHours(0, 0, 0, 0)
+
       let status = 'normal'
       if (predicted && predicted < today) status = 'overdue'
+      else if (predicted && predicted.getTime() === today.getTime()) status = 'today'
       else if (predicted && predicted <= in7days) status = 'soon'
 
       return {
@@ -260,8 +270,14 @@ const buildUpcomingWithStatus = (rows) => {
 
 const upcomingWithStatus = computed(() => buildUpcomingWithStatus(displayData.value.upcomingRevisions))
 
+// 🔧 CORRIGIDO — inclui o novo status 'today' na contagem. Sem isso, as
+// revisões previstas para hoje (que antes eram contadas como 'soon')
+// sumiriam do card "Próximas revisões" assim que 'today' passou a existir
+// como status próprio.
 const kpiProximasRevisoes = computed(
-  () => upcomingWithStatus.value.filter((r) => r.status === 'overdue' || r.status === 'soon').length
+  () => upcomingWithStatus.value.filter(
+    (r) => r.status === 'overdue' || r.status === 'today' || r.status === 'soon'
+  ).length
 )
 
 // ---------------------------------------------------------------------
