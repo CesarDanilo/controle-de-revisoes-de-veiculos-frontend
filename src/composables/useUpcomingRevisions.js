@@ -15,6 +15,7 @@ function classifyStatus(predictedDate) {
   const diffDays = Math.round((target - today) / ONE_DAY)
 
   if (diffDays < 0) return 'overdue'
+  if (diffDays === 0) return 'today' // 🔧 CORRIGIDO — antes caía direto em 'soon'
   if (diffDays <= 7) return 'soon'
   return 'normal'
 }

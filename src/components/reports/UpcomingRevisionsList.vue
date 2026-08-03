@@ -1,9 +1,9 @@
 <script setup>
-import { AlertTriangle, Clock, Car, ChevronRight } from '@lucide/vue'
+import { AlertTriangle, Calendar, Clock, Car, ChevronRight } from '@lucide/vue'
 
 defineProps({
   // [{ person_id, vehicle_id, revision_id, person_name, vehicle, predicted_date_label, status, origin_label }]
-  // status: 'overdue' | 'soon' | 'normal'
+  // status: 'overdue' | 'today' | 'soon' | 'normal'
   items: { type: Array, required: true },
 })
 
@@ -11,12 +11,15 @@ defineProps({
 // já destacando a revisão específica (ver UpcomingRevisionsPanel.vue)
 const emit = defineEmits(['select'])
 
-// 🔧 CORRIGIDO — badges agora seguem a mesma paleta usada em outros
-// indicadores de status do app (ex: banner de erro em ReportsView.vue usa
-// red-50/text-red-700; KPI "warning" usa amber). "Atrasada" e "Esta
-// semana" usam essas mesmas cores, em vez de tons soltos.
+// 🔧 CORRIGIDO — badges seguem a mesma paleta usada em outros indicadores
+// de status do app (ex: banner de erro em ReportsView.vue usa
+// red-50/text-red-700; KPI "warning" usa amber). Adicionado o status
+// 'today', que antes não tinha entrada aqui e por isso caía sem badge
+// nenhum (o classifyStatus já retornava 'soon' pra hoje, mascarando o
+// problema — agora "hoje" tem status e estilo próprios).
 const STATUS_STYLE = {
   overdue: { badge: 'bg-red-50 text-red-700', icon: AlertTriangle, label: 'Atrasada' },
+  today: { badge: 'bg-brand-50 text-brand-700', icon: Calendar, label: 'Hoje' },
   soon: { badge: 'bg-amber-50 text-amber-700', icon: Clock, label: 'Esta semana' },
 }
 </script>
