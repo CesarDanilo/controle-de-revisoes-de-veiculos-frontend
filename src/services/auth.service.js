@@ -7,7 +7,10 @@ export const authService = {
   },
 
   async register({ name, email, password }) {
-    const { data } = await api.post('/users', { name, email, password })
-    return data
+    // 1. Cria o usuário no backend (POST /users)
+    await api.post('/users', { name, email, password })
+
+    // 2. Faz o login automático logo em seguida para obter o token e dados da sessão
+    return await this.login({ email, password })
   },
 }
