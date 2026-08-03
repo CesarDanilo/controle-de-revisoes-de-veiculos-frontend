@@ -23,6 +23,10 @@ import { useToast } from '../composables/useToast'
 import { useReportPdf } from '../composables/useReportPdf'
 import { maskPhone } from '../utils/masks'
 
+import { useReportExport } from '../composables/useReportExport'
+const { exportReport, isRequesting: isQueueRequesting, isPolling: isQueuePolling } = useReportExport()
+const isExportingFull = computed(() => isQueueRequesting.value || isQueuePolling.value)
+
 const {
   data,
   revisionsSummary,
@@ -47,7 +51,10 @@ const { updatePerson } = usePeople()
 const toast = useToast()
 const route = useRoute()
 
-const { exportOverview, exportTable, exportMultiTable, exportFullReport } = useReportPdf()
+// 🔧 CORRIGIDO — exportFullReport (jsPDF no navegador) removido daqui,
+// pois o relatório completo passou a ser gerado via fila no backend
+// (ver exportFullReportPDFQueued mais abaixo).
+const { exportOverview, exportTable, exportMultiTable } = useReportPdf()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
 const formatDateBR = (value) => {
@@ -511,7 +518,7 @@ const handleVehiclesByPersonRowClick = (row) => {
 }
 
 // ---------------------------------------------------------------------
-// EXPORTAÇÃO EM PDF
+// EXPORTAÇÃO EM PDF (seções individuais — continuam no frontend, são leves)
 // ---------------------------------------------------------------------
 const withExportLoading = async (key, task) => {
   if (isExportingSection.value) return
@@ -695,84 +702,22 @@ const exportPeopleTablePDF = () => withExportLoading('people', async () => {
   })
 })
 
-const exportFullReportPDF = () => withExportLoading('full', async () => {
-  const overviewPayload = buildOverviewPayload()
-
-  const originalAvgPage = pagination.avgIntervalByPerson.currentPage
-  const avgRows = await fetchAllRows(
-    (page) => fetchAvgIntervalByPerson(page),
-    () => data.value.avgIntervalByPerson,
-    () => pagination.avgIntervalByPerson,
-    originalAvgPage,
-  )
-
-  const originalPeriodPage = pagination.revisionsByPeriod.currentPage
-  const periodRows = await fetchAllRows(
-    (page) => fetchRevisionsByPeriod(periodStart.value, periodEnd.value, page),
-    () => data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) })),
-    () => pagination.revisionsByPeriod,
-    originalPeriodPage,
-  )
-
-  const originalVehiclesPage = pagination.vehiclesByPerson.currentPage
-  const vehicleRows = await fetchAllRows(
-    (page) => fetchVehiclesByPerson(page),
-    () => data.value.vehiclesByPerson,
-    () => pagination.vehiclesByPerson,
-    originalVehiclesPage,
-  )
-
-  const originalPeoplePage = pagination.allPeople.currentPage
-  const peopleRows = await fetchAllRows(
-    (page) => fetchAllPeople(page),
-    () => data.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) })),
-    () => pagination.allPeople,
-    originalPeoplePage,
-  )
-
-  exportFullReport({
-    overview: overviewPayload,
-    tables: [
-      {
-        title: 'Tempo médio entre revisões (por pessoa)',
-        columns: [
-          { key: 'person_name', label: 'Pessoa' },
-          { key: 'avg_days', label: 'Média (dias)' },
-        ],
-        rows: avgRows,
-      },
-      {
-        title: 'Revisões no período selecionado',
-        columns: [
-          { key: 'date', label: 'Data' },
-          { key: 'person_name', label: 'Pessoa' },
-          { key: 'vehicle', label: 'Veículo' },
-          { key: 'description', label: 'Descrição' },
-        ],
-        rows: periodRows,
-      },
-      {
-        title: 'Todos os veículos por pessoa',
-        columns: [
-          { key: 'person_name', label: 'Proprietário' },
-          { key: 'plate', label: 'Placa' },
-          { key: 'model', label: 'Modelo' },
-          { key: 'brand', label: 'Marca' },
-        ],
-        rows: vehicleRows,
-      },
-      {
-        title: 'Todas as pessoas',
-        columns: [
-          { key: 'name', label: 'Nome' },
-          { key: 'email', label: 'E-mail' },
-          { key: 'phone', label: 'Telefone' },
-        ],
-        rows: peopleRows,
-      },
-    ],
-  })
-})
+// ---------------------------------------------------------------------
+// 🔧 CORRIGIDO — relatório completo agora via fila (backend), em vez de
+// montar tudo com jsPDF no navegador. Usa o composable useReportExport:
+// pede a exportação, faz polling do status e baixa o PDF pronto.
+// ---------------------------------------------------------------------
+const exportFullReportPDFQueued = async () => {
+  try {
+    await exportReport('full', {
+      start: periodStart.value,
+      end: periodEnd.value,
+      filename: `relatorio-completo-${periodStart.value}-a-${periodEnd.value}.pdf`,
+    })
+  } catch (error) {
+    toast.error(error.message || 'Não foi possível gerar o relatório.')
+  }
+}
 
 const activeTabExportHandler = computed(() => {
   if (activeDetailTab.value === 'vehicles') return exportVehiclesTablePDF
@@ -802,12 +747,12 @@ onMounted(loadAll)
         v-if="!isLoading && hasAnyData"
         type="button"
         class="flex w-full items-center justify-center gap-2 rounded-xl cursor-pointer bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-500 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-        :disabled="isExporting"
-        @click="exportFullReportPDF"
+        :disabled="isExportingFull"
+        @click="exportFullReportPDFQueued"
       >
-        <RefreshCw v-if="isExportingSection === 'full'" :size="16" class="animate-spin" />
+        <RefreshCw v-if="isExportingFull" :size="16" class="animate-spin" />
         <Download v-else :size="16" />
-        {{ isExportingSection === 'full' ? 'Gerando PDF...' : 'Exportar relatório completo' }}
+        {{ isQueueRequesting ? 'Enfileirando...' : isQueuePolling ? 'Gerando (fila)...' : 'Exportar relatório completo' }}
       </button>
     </template>
 
