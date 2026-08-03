@@ -26,7 +26,33 @@ const baseOptions = {
   },
 }
 
-const labelCount = computed(() => props.chartData?.labels?.length || 0)
+// 🔧 CORRIGIDO — ordena as marcas (labels) em ordem alfabética, reordenando
+// junto os arrays "data" de cada dataset para manter cada valor associado
+// à marca correta. Não altera o chartData original recebido via prop.
+const sortedChartData = computed(() => {
+  const labels = props.chartData?.labels || []
+
+  if (!labels.length) return props.chartData
+
+  const order = labels
+    .map((label, index) => ({ label, index }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base' }))
+
+  const sortedLabels = order.map((o) => o.label)
+
+  const sortedDatasets = (props.chartData.datasets || []).map((dataset) => ({
+    ...dataset,
+    data: order.map((o) => dataset.data[o.index]),
+  }))
+
+  return {
+    ...props.chartData,
+    labels: sortedLabels,
+    datasets: sortedDatasets,
+  }
+})
+
+const labelCount = computed(() => sortedChartData.value?.labels?.length || 0)
 
 // tamanho "real" do gráfico (cresce com a quantidade de dados)
 const computedSize = computed(() => {
@@ -52,14 +78,14 @@ const needsScroll = computed(() => labelCount.value > props.minItemsForScroll)
           : { width: needsScroll ? computedSize + 'px' : '100%', height: '100%' }"
       >
         <Bar
-          :data="chartData"
+          :data="sortedChartData"
           :options="{
             ...baseOptions,
             indexAxis: horizontal ? 'y' : 'x',
             layout: showValues && horizontal ? { padding: { right: 28 } } : undefined,
             plugins: {
               legend: {
-                display: showLegend && chartData.datasets.length > 1,
+                display: showLegend && sortedChartData.datasets.length > 1,
                 position: 'bottom',
                 labels: { boxWidth: 10, font: { size: 12 }, usePointStyle: true, pointStyle: 'circle' },
               },
