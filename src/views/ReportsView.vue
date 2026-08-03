@@ -51,11 +51,6 @@ const { updatePerson } = usePeople()
 const toast = useToast()
 const route = useRoute()
 
-// 🔧 CORRIGIDO — exportFullReport (jsPDF no navegador) removido daqui,
-// pois o relatório completo passou a ser gerado via fila no backend
-// (ver exportFullReportPDFQueued mais abaixo).
-// 🔧 CORRIGIDO — exportMultiTable removido: "Revisões" também passou a
-// ser gerado via fila (ver exportRevisionsTablePDF mais abaixo).
 const { exportOverview, exportTable } = useReportPdf()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
@@ -115,9 +110,6 @@ const activePreset = ref('30d')
 const periodStart = ref('')
 const periodEnd = ref('')
 
-// 🟢 NOVO — rótulo dinâmico do período, usado nos painéis de ranking em
-// vez do texto fixo "Todos os períodos" (que agora seria enganoso, já
-// que os rankings passaram a respeitar o filtro).
 const periodLabel = computed(() => {
   const preset = PRESETS.find((p) => p.key === activePreset.value)
   if (preset && preset.key !== 'custom') return preset.label
@@ -127,8 +119,6 @@ const periodLabel = computed(() => {
   return 'Período selecionado'
 })
 
-// 🔧 CORRIGIDO — dispara também os rankings de marcas/clientes junto com
-// a tabela e o summary, garantindo que reflitam o período selecionado.
 const applyPreset = (preset) => {
   activePreset.value = preset.key
   if (preset.key === 'custom') return
@@ -351,18 +341,77 @@ const TAB_HASH_MAP = {
   '#aba-pessoas': 'people',
 }
 
-const HEADER_OFFSET = 96
+// 🔧 CORRIGIDO — a correção anterior (offset de <header> fixo) partia do
+// pressuposto de que a página inteira rola na `window`. Só que o layout
+// real usa um sidebar fixo à esquerda + uma área de conteúdo com o próprio
+// scroll interno (overflow-y-auto), então `window.scrollTo` não move o
+// container certo — por isso a aba "sobrava" lá embaixo, fora da área
+// visível, mesmo com o offset ajustado.
+//
+// Agora a lógica:
+// 1) descobre automaticamente QUAL elemento realmente rola (a window ou
+//    um container pai com overflow), subindo pela árvore a partir do
+//    próprio alvo do scroll — funciona com qualquer um dos dois layouts;
+// 2) em vez de depender de um offset de header fixo, calcula a posição
+//    real do alvo dentro DESSE container (não da window), e alinha o
+//    alvo no topo da área visível com uma margem pequena.
+const isWindowContainer = (container) =>
+  container === document.scrollingElement || container === document.documentElement
+
+const getScrollContainer = (el) => {
+  let node = el?.parentElement
+  while (node && node !== document.body && node !== document.documentElement) {
+    const style = window.getComputedStyle(node)
+    const canScrollY = /(auto|scroll)/.test(style.overflowY)
+    if (canScrollY && node.scrollHeight > node.clientHeight + 1) {
+      return node
+    }
+    node = node.parentElement
+  }
+  return document.scrollingElement || document.documentElement
+}
+
+const getContainerScrollTop = (container) =>
+  isWindowContainer(container) ? window.scrollY : container.scrollTop
+
+const getContainerMaxScrollTop = (container) =>
+  isWindowContainer(container)
+    ? document.documentElement.scrollHeight - window.innerHeight
+    : container.scrollHeight - container.clientHeight
+
+const scrollContainerTo = (container, top) => {
+  if (isWindowContainer(container)) {
+    window.scrollTo({ top, behavior: 'smooth' })
+  } else {
+    container.scrollTo({ top, behavior: 'smooth' })
+  }
+}
+
+// 🎛️ AJUSTE MANUAL — esse é o ÚNICO número que controla onde a seção
+// (barra de abas + ReportPanel/ReportTable) para na tela depois do
+// redirecionamento. É a distância, em pixels, entre o topo da área visível
+// (do container que rola) e o topo da seção depois do scroll.
+//
+// Como ajustar:
+// - Se a seção estiver aparecendo MUITO PRA BAIXO (com espaço vazio demais
+//   em cima dela) → DIMINUA esse número (pode até ser negativo).
+// - Se a seção estiver aparecendo MUITO PRA CIMA / colada no topo → AUMENTE
+//   esse número.
+//
+// Não tem nenhum outro lugar no arquivo que interfere nisso — é só esse
+// valor mesmo. Mude, salve, teste, repita até ficar do jeito que você quer.
+const SCROLL_TOP_OFFSET_PX = -800
 
 const scrollSpacerHeight = ref(0)
 
-const waitForScrollToSettle = (target, { tolerance = 2, maxWait = 3000 } = {}) => {
+const waitForScrollToSettle = (container, target, { tolerance = 2, maxWait = 3000 } = {}) => {
   return new Promise((resolve) => {
     const startedAt = Date.now()
-    let lastY = window.scrollY
+    let lastY = getContainerScrollTop(container)
     let stableFrames = 0
 
     const check = () => {
-      const currentY = window.scrollY
+      const currentY = getContainerScrollTop(container)
       const reachedTarget = Math.abs(currentY - target) <= tolerance
       const stoppedMoving = Math.abs(currentY - lastY) <= tolerance
 
@@ -390,19 +439,32 @@ const scrollToTarget = async (targetId) => {
   const el = document.getElementById(targetId)
   if (!el) return
 
-  const desiredTop = el.getBoundingClientRect().top + window.scrollY - HEADER_OFFSET
-  const maxScrollTop = document.documentElement.scrollHeight - window.innerHeight
-  const missing = desiredTop - maxScrollTop
+  const container = getScrollContainer(el)
+  const containerTopOnScreen = isWindowContainer(container)
+    ? 0
+    : container.getBoundingClientRect().top
 
-  if (missing > 0) {
-    scrollSpacerHeight.value = Math.ceil(missing) + 24
-    await nextTick()
+  const elTopRelativeToContainer =
+    el.getBoundingClientRect().top - containerTopOnScreen + getContainerScrollTop(container)
+
+  // Usa o valor manual definido em SCROLL_TOP_OFFSET_PX lá em cima.
+  const desiredTop = elTopRelativeToContainer - SCROLL_TOP_OFFSET_PX
+  const maxScrollTop = getContainerMaxScrollTop(container)
+
+  // Só cria espaço extra artificial quando quem rola é mesmo a `window`
+  // (não faz sentido "esticar" um container de layout interno).
+  if (isWindowContainer(container)) {
+    const missing = desiredTop - maxScrollTop
+    if (missing > 0) {
+      scrollSpacerHeight.value = Math.ceil(missing) + 24
+      await nextTick()
+    }
   }
 
-  const target = Math.max(desiredTop, 0)
-  window.scrollTo({ top: target, behavior: 'smooth' })
+  const target = Math.min(Math.max(desiredTop, 0), Math.max(getContainerMaxScrollTop(container), 0))
+  scrollContainerTo(container, target)
 
-  await waitForScrollToSettle(target)
+  await waitForScrollToSettle(container, target)
   scrollSpacerHeight.value = 0
 }
 
@@ -413,7 +475,11 @@ const scrollToHashSection = async () => {
   if (tabKey) activeDetailTab.value = tabKey
 
   await nextTick()
-  const targetId = tabKey ? 'secao-detalhes' : route.hash.slice(1)
+  // O alvo é a barra de abas ("secao-detalhes-tabs"), não a div
+  // "secao-detalhes" inteira — assim o alinhamento no topo sempre acontece
+  // em cima de um elemento pequeno e de altura estável, em vez de depender
+  // do tamanho variável da tabela que vem logo abaixo.
+  const targetId = tabKey ? 'secao-detalhes-tabs' : route.hash.slice(1)
   await scrollToTarget(targetId)
 }
 
@@ -569,12 +635,10 @@ const buildOverviewPayload = () => ({
   ],
 })
 
-// Leve — continua no navegador (jsPDF), não passa pela fila.
 const exportOverviewPDF = () => withExportLoading('overview', () => {
   exportOverview(buildOverviewPayload())
 })
 
-// Leve — continua no navegador (jsPDF), não passa pela fila.
 const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () => {
   const originalPage = pagination.upcomingRevisions.currentPage
   const rawRows = await fetchAllRows(
@@ -597,7 +661,6 @@ const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () 
   })
 })
 
-// Leve — continua no navegador (jsPDF), não passa pela fila.
 const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', async () => {
   const originalPeriodPage = pagination.revisionsByPeriod.currentPage
   const periodRows = await fetchAllRows(
@@ -620,7 +683,6 @@ const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', as
   })
 })
 
-// 🔧 CORRIGIDO — agora gerado via fila (backend), igual o relatório completo.
 const exportRevisionsTablePDF = () => withExportLoading('revisions', async () => {
   try {
     await exportReport('revisions', {
@@ -633,7 +695,6 @@ const exportRevisionsTablePDF = () => withExportLoading('revisions', async () =>
   }
 })
 
-// 🔧 CORRIGIDO — agora gerado via fila (backend).
 const exportVehiclesTablePDF = () => withExportLoading('vehicles', async () => {
   try {
     await exportReport('vehicles', {
@@ -644,7 +705,6 @@ const exportVehiclesTablePDF = () => withExportLoading('vehicles', async () => {
   }
 })
 
-// 🔧 CORRIGIDO — agora gerado via fila (backend).
 const exportPeopleTablePDF = () => withExportLoading('people', async () => {
   try {
     await exportReport('people', {
@@ -655,11 +715,6 @@ const exportPeopleTablePDF = () => withExportLoading('people', async () => {
   }
 })
 
-// ---------------------------------------------------------------------
-// 🔧 CORRIGIDO — relatório completo agora via fila (backend), em vez de
-// montar tudo com jsPDF no navegador. Usa o composable useReportExport:
-// pede a exportação, faz polling do status e baixa o PDF pronto.
-// ---------------------------------------------------------------------
 const exportFullReportPDFQueued = async () => {
   try {
     await exportReport('full', {
@@ -858,7 +913,7 @@ onMounted(loadAll)
 
       <!-- ====== TABELAS DETALHADAS ====== -->
       <div id="secao-detalhes" class="scroll-mt-6">
-        <div class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-ink-100">
+        <div id="secao-detalhes-tabs" class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-ink-100">
           <div class="flex gap-2">
             <button
               v-for="tab in detailTabs"

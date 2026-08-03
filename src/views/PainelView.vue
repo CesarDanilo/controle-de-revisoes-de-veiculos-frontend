@@ -90,7 +90,7 @@ const stats = computed(() => [
     value: formatCurrency(summary.value?.total_invested ?? 0),
     icon: Wallet,
     loading: summaryLoading.value,
-    to: '/relatorios#secao-financeiro',
+    to: '/relatorios',
   },
 ])
 
