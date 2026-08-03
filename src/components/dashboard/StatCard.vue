@@ -11,7 +11,7 @@ defineProps({
 </script>
 
 <template>
-  <div class="rounded-2xl border border-ink-100 bg-white p-5">
+  <div class="rounded-2xl border border-ink-100 bg-white p-5 overflow-hidden">
     <div class="flex items-center justify-between">
       <p class="text-xs font-semibold uppercase tracking-wide text-ink-500">{{ label }}</p>
       <component :is="icon" :size="18" :class="loading ? 'text-ink-300' : 'text-brand-500'" />
@@ -24,10 +24,15 @@ defineProps({
         role="status"
         aria-label="Carregando"
       />
-      <p v-else class="text-3xl font-extrabold tracking-tight text-ink-900">{{ value }}</p>
+      <p
+        v-else
+        class="text-3xl font-extrabold tracking-tight text-ink-900 truncate"
+        :title="value"
+      >
+        {{ value }}
+      </p>
     </div>
 
-    <!-- 🟢 NOVO — mesmo padrão do link "Ver relatórios" do UpcomingRevisionsCard -->
     <router-link
       v-if="to"
       :to="to"

@@ -86,7 +86,7 @@ const stats = computed(() => [
     to: '/relatorios#aba-revisoes',
   },
   {
-    label: 'Investido',
+    label: 'Faturamento',
     value: formatCurrency(summary.value?.total_invested ?? 0),
     icon: Wallet,
     loading: summaryLoading.value,
