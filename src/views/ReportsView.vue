@@ -54,7 +54,9 @@ const route = useRoute()
 // 🔧 CORRIGIDO — exportFullReport (jsPDF no navegador) removido daqui,
 // pois o relatório completo passou a ser gerado via fila no backend
 // (ver exportFullReportPDFQueued mais abaixo).
-const { exportOverview, exportTable, exportMultiTable } = useReportPdf()
+// 🔧 CORRIGIDO — exportMultiTable removido: "Revisões" também passou a
+// ser gerado via fila (ver exportRevisionsTablePDF mais abaixo).
+const { exportOverview, exportTable } = useReportPdf()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
 const formatDateBR = (value) => {
@@ -518,7 +520,7 @@ const handleVehiclesByPersonRowClick = (row) => {
 }
 
 // ---------------------------------------------------------------------
-// EXPORTAÇÃO EM PDF (seções individuais — continuam no frontend, são leves)
+// EXPORTAÇÃO EM PDF
 // ---------------------------------------------------------------------
 const withExportLoading = async (key, task) => {
   if (isExportingSection.value) return
@@ -567,10 +569,12 @@ const buildOverviewPayload = () => ({
   ],
 })
 
+// Leve — continua no navegador (jsPDF), não passa pela fila.
 const exportOverviewPDF = () => withExportLoading('overview', () => {
   exportOverview(buildOverviewPayload())
 })
 
+// Leve — continua no navegador (jsPDF), não passa pela fila.
 const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () => {
   const originalPage = pagination.upcomingRevisions.currentPage
   const rawRows = await fetchAllRows(
@@ -593,6 +597,7 @@ const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () 
   })
 })
 
+// Leve — continua no navegador (jsPDF), não passa pela fila.
 const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', async () => {
   const originalPeriodPage = pagination.revisionsByPeriod.currentPage
   const periodRows = await fetchAllRows(
@@ -615,91 +620,39 @@ const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', as
   })
 })
 
+// 🔧 CORRIGIDO — agora gerado via fila (backend), igual o relatório completo.
 const exportRevisionsTablePDF = () => withExportLoading('revisions', async () => {
-  const originalAvgPage = pagination.avgIntervalByPerson.currentPage
-  const avgRows = await fetchAllRows(
-    (page) => fetchAvgIntervalByPerson(page),
-    () => data.value.avgIntervalByPerson,
-    () => pagination.avgIntervalByPerson,
-    originalAvgPage,
-  )
-
-  const originalPeriodPage = pagination.revisionsByPeriod.currentPage
-  const periodRows = await fetchAllRows(
-    (page) => fetchRevisionsByPeriod(periodStart.value, periodEnd.value, page),
-    () => data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) })),
-    () => pagination.revisionsByPeriod,
-    originalPeriodPage,
-  )
-
-  exportMultiTable({
-    title: 'Revisões',
-    subtitle: `Período: ${formatDateBR(periodStart.value)} a ${formatDateBR(periodEnd.value)}`,
-    filenamePrefix: 'revisoes',
-    sections: [
-      {
-        title: 'Tempo médio entre revisões (por pessoa)',
-        columns: [
-          { key: 'person_name', label: 'Pessoa' },
-          { key: 'avg_days', label: 'Média (dias)' },
-        ],
-        rows: avgRows,
-      },
-      {
-        title: 'Revisões no período selecionado',
-        columns: [
-          { key: 'date', label: 'Data' },
-          { key: 'person_name', label: 'Pessoa' },
-          { key: 'vehicle', label: 'Veículo' },
-          { key: 'description', label: 'Descrição' },
-        ],
-        rows: periodRows,
-      },
-    ],
-  })
+  try {
+    await exportReport('revisions', {
+      start: periodStart.value,
+      end: periodEnd.value,
+      filename: `revisoes-${periodStart.value}-a-${periodEnd.value}.pdf`,
+    })
+  } catch (error) {
+    toast.error(error.message || 'Não foi possível gerar o relatório.')
+  }
 })
 
+// 🔧 CORRIGIDO — agora gerado via fila (backend).
 const exportVehiclesTablePDF = () => withExportLoading('vehicles', async () => {
-  const originalPage = pagination.vehiclesByPerson.currentPage
-  const rows = await fetchAllRows(
-    (page) => fetchVehiclesByPerson(page),
-    () => data.value.vehiclesByPerson,
-    () => pagination.vehiclesByPerson,
-    originalPage,
-  )
-
-  exportTable({
-    title: 'Todos os veículos por pessoa',
-    filenamePrefix: 'veiculos',
-    columns: [
-      { key: 'person_name', label: 'Proprietário' },
-      { key: 'plate', label: 'Placa' },
-      { key: 'model', label: 'Modelo' },
-      { key: 'brand', label: 'Marca' },
-    ],
-    rows,
-  })
+  try {
+    await exportReport('vehicles', {
+      filename: 'veiculos.pdf',
+    })
+  } catch (error) {
+    toast.error(error.message || 'Não foi possível gerar o relatório.')
+  }
 })
 
+// 🔧 CORRIGIDO — agora gerado via fila (backend).
 const exportPeopleTablePDF = () => withExportLoading('people', async () => {
-  const originalPage = pagination.allPeople.currentPage
-  const rows = await fetchAllRows(
-    (page) => fetchAllPeople(page),
-    () => data.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) })),
-    () => pagination.allPeople,
-    originalPage,
-  )
-
-  exportTable({
-    title: 'Todas as pessoas',
-    filenamePrefix: 'pessoas',
-    columns: [
-      { key: 'name', label: 'Nome' },
-      { key: 'email', label: 'E-mail' },
-      { key: 'phone', label: 'Telefone' },
-    ],
-    rows,
-  })
+  try {
+    await exportReport('people', {
+      filename: 'pessoas.pdf',
+    })
+  } catch (error) {
+    toast.error(error.message || 'Não foi possível gerar o relatório.')
+  }
 })
 
 // ---------------------------------------------------------------------
