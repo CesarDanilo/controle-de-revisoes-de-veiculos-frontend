@@ -36,6 +36,16 @@ export function useReports() {
     upcomingRevisions: [],
   })
 
+  // 🟢 NOVO — resumo agregado do período (KPIs), separado de "data" porque
+  // não é uma lista paginada, é um objeto único com totais já calculados
+  // no banco (COUNT/SUM/COUNT DISTINCT via revisionsPeriodSummary).
+  const revisionsSummary = ref({
+    total_revisions: 0,
+    vehicles_count: 0,
+    people_count: 0,
+    total_cost: 0,
+  })
+
   // Metadados de paginação de cada recurso paginado
   const pagination = reactive({
     vehiclesByPerson: emptyMeta(),
@@ -52,6 +62,7 @@ export function useReports() {
     revisionsByPeriod: false,
     avgIntervalByPerson: false,
     upcomingRevisions: false,
+    revisionsSummary: false,
   })
 
   // ---------------------------------------------------------------------
@@ -96,6 +107,21 @@ export function useReports() {
       errorMessage.value = 'Não foi possível carregar as revisões do período.'
     } finally {
       tableLoading.revisionsByPeriod = false
+    }
+  }
+
+  // 🟢 NOVO — busca o resumo agregado (KPIs) do período. Independente da
+  // paginação de revisionsByPeriod: sempre reflete o TOTAL real, não a
+  // página atual.
+  async function fetchRevisionsPeriodSummary(start = '', end = '') {
+    tableLoading.revisionsSummary = true
+    try {
+      const response = await reportService.revisionsPeriodSummary(start, end)
+      revisionsSummary.value = response
+    } catch {
+      errorMessage.value = 'Não foi possível carregar o resumo de revisões do período.'
+    } finally {
+      tableLoading.revisionsSummary = false
     }
   }
 
@@ -166,6 +192,9 @@ export function useReports() {
     }
   }
 
+  // 🔧 CORRIGIDO — agora também dispara fetchRevisionsPeriodSummary junto
+  // com os outros fetchers do período, garantindo que os KPIs sempre
+  // reflitam o total agregado, não a página atual da tabela.
   async function fetchRevisionReports(start = '', end = '') {
     isLoading.value = true
     errorMessage.value = ''
@@ -178,6 +207,7 @@ export function useReports() {
       data.value.peopleRevisionRanking = people
       await Promise.all([
         fetchRevisionsByPeriod(start, end, 1),
+        fetchRevisionsPeriodSummary(start, end),
         fetchAvgIntervalByPerson(1),
         fetchUpcomingRevisions(1),
       ])
@@ -190,6 +220,7 @@ export function useReports() {
 
   return {
     data,
+    revisionsSummary,
     pagination,
     tableLoading,
     isLoading,
@@ -200,6 +231,7 @@ export function useReports() {
     fetchVehiclesByPerson,
     fetchAllPeople,
     fetchRevisionsByPeriod,
+    fetchRevisionsPeriodSummary,
     fetchAvgIntervalByPerson,
     fetchUpcomingRevisions,
   }

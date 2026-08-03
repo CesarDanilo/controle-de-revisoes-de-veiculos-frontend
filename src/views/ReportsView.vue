@@ -28,6 +28,7 @@ import { maskPhone } from '../utils/masks'
 
 const {
   data,
+  revisionsSummary, // 🟢 NOVO — resumo agregado (COUNT/SUM) do período, usado pelos KPIs
   pagination,
   tableLoading,
   isLoading,
@@ -38,6 +39,7 @@ const {
   fetchVehiclesByPerson,
   fetchAllPeople,
   fetchRevisionsByPeriod,
+  fetchRevisionsPeriodSummary, // 🟢 NOVO
   fetchAvgIntervalByPerson,
   fetchUpcomingRevisions, // 🔧 CORRIGIDO — necessário para paginar todas as páginas na exportação
 } = useReports()
@@ -70,29 +72,12 @@ const toISODate = (date) => {
 }
 
 // ---- Rótulo de gênero com 3 categorias (M / F / Outros) ----
-// 🔧 CORRIGIDO — o backend pode devolver o mesmo "grupo visual" (Outros)
-// em mais de uma linha (ex: gender = 'O' para PF que se identifica como
-// Outros, e gender = null para PJ, que não tem gênero — colunas
-// gender/birth_date são nullable desde a migration
-// alter_people_table_add_person_type). Antes, vehiclesByGenderChart e
-// peopleByGenderChart faziam um map() 1-para-1 em cima das linhas cruas
-// da API: cada linha virava uma fatia própria do doughnut, então 'O' e
-// null geravam DUAS fatias cinzas com o mesmo rótulo "Outros" e valores
-// diferentes, mesmo só existindo 3 categorias possíveis. Agora
-// normalizamos a chave ANTES de montar o gráfico e agregamos (somamos)
-// tudo que não for exatamente 'M' ou 'F' num único balde "OTHERS",
-// garantindo sempre no máximo 3 fatias.
 const GENDER_ORDER = ['M', 'F', 'OTHERS']
 const GENDER_LABELS = { M: 'Homens', F: 'Mulheres', OTHERS: 'Outros' }
 const GENDER_COLORS = { M: '#6366f1', F: '#f472b6', OTHERS: '#94a3b8' } // slate neutro pra "Outros"
 
-// Qualquer código que não seja exatamente 'M' ou 'F' (inclui 'O', null,
-// undefined, string vazia, etc.) cai no mesmo balde "OTHERS".
 const normalizeGenderKey = (code) => (code === 'M' || code === 'F' ? code : 'OTHERS')
 
-// Agrupa uma lista de linhas { gender, count } por chave normalizada,
-// somando os valores — em vez do map() 1-para-1 que causava a duplicação
-// de fatias "Outros" no gráfico.
 const aggregateByGender = (rows, countKey = 'count') => {
   const totals = { M: 0, F: 0, OTHERS: 0 }
 
@@ -108,8 +93,6 @@ const aggregateByGender = (rows, countKey = 'count') => {
       value: totals[key],
       color: GENDER_COLORS[key],
     }))
-    // Some para não exibir fatia/legenda de valor zero (ex: se ainda não
-    // houver nenhuma pessoa/veículo "Outros" cadastrado).
     .filter((entry) => entry.value > 0)
 }
 
@@ -128,6 +111,9 @@ const activePreset = ref('30d')
 const periodStart = ref('')
 const periodEnd = ref('')
 
+// 🔧 CORRIGIDO — dispara também fetchRevisionsPeriodSummary junto com a
+// tabela paginada, garantindo que os KPIs reflitam o total real do
+// período, não só os 15 itens da página atual.
 const applyPreset = (preset) => {
   activePreset.value = preset.key
   if (preset.key === 'custom') return
@@ -138,14 +124,14 @@ const applyPreset = (preset) => {
 
   periodStart.value = toISODate(start)
   periodEnd.value = toISODate(end)
-  // Só a tabela de revisões do período depende do filtro de datas —
-  // rankings e intervalo médio são "todos os períodos", não precisam recarregar.
   fetchRevisionsByPeriod(periodStart.value, periodEnd.value, 1)
+  fetchRevisionsPeriodSummary(periodStart.value, periodEnd.value)
 }
 
 const applyCustomPeriod = () => {
   activePreset.value = 'custom'
   fetchRevisionsByPeriod(periodStart.value, periodEnd.value, 1)
+  fetchRevisionsPeriodSummary(periodStart.value, periodEnd.value)
 }
 
 // ---------------------------------------------------------------------
@@ -161,7 +147,7 @@ const loadAll = async () => {
   await Promise.all([
     fetchVehicleReports(),
     fetchPeopleReports(),
-    fetchRevisionReports(periodStart.value, periodEnd.value),
+    fetchRevisionReports(periodStart.value, periodEnd.value), // já dispara o summary internamente
     fetchAvgIntervalByPerson(),
   ])
 }
@@ -171,26 +157,8 @@ const hasAnyData = computed(
 )
 
 // ---------------------------------------------------------------------
-// 🟢 NOVO — "CONGELAMENTO" DA TELA DURANTE EXPORTAÇÃO
+// 🟢 "CONGELAMENTO" DA TELA DURANTE EXPORTAÇÃO
 // ---------------------------------------------------------------------
-// PROBLEMA: fetchAllRows (mais abaixo) reaproveita os mesmos fetchers que
-// alimentam a tela (fetchRevisionsByPeriod, fetchAllPeople, etc.) pra
-// varrer TODAS as páginas antes de gerar o PDF. Só que esses fetchers
-// escrevem no MESMO `data`/`pagination` reativo que os KPIs, gráficos e
-// tabelas da tela já estão lendo — então, durante a exportação, a tela
-// pisca com os valores de cada página intermediária até a página original
-// ser restaurada no final. Isso NÃO pode acontecer na frente do cliente.
-//
-// SOLUÇÃO: assim que QUALQUER exportação começa (isExportingSection deixa
-// de ser null), tiramos uma "foto" do estado atual de data/pagination e
-// passamos a exibir essa foto congelada em vez do `data`/`pagination` ao
-// vivo. Quando a exportação termina, a foto é descartada e a tela volta a
-// ler o `data`/`pagination` ao vivo — que nesse ponto já foi restaurado
-// pra página original, então a transição é invisível pro usuário.
-//
-// isExportingSection é declarado aqui em cima (não mais lá embaixo, perto
-// dos exportXPDF) justamente para os computeds de KPI/tabela, que vêm
-// antes no arquivo, poderem depender dele.
 const isExportingSection = ref(null)
 const isExporting = computed(() => isExportingSection.value !== null)
 
@@ -203,6 +171,7 @@ watch(isExportingSection, (newVal, oldVal) => {
   if (startedExporting) {
     frozenSnapshot.value = {
       revisionsByPeriod: data.value.revisionsByPeriod.map((row) => ({ ...row })),
+      revisionsSummary: { ...revisionsSummary.value }, // 🟢 NOVO — congela o summary também
       allPeople: data.value.allPeople.map((row) => ({ ...row })),
       vehiclesByPerson: data.value.vehiclesByPerson.map((row) => ({ ...row })),
       avgIntervalByPerson: data.value.avgIntervalByPerson.map((row) => ({ ...row })),
@@ -220,8 +189,6 @@ watch(isExportingSection, (newVal, oldVal) => {
   }
 })
 
-// Tudo que os KPIs/tabelas leem passa a vir daqui. Enquanto não há
-// exportação em andamento, é só um espelho de `data`/`pagination` ao vivo.
 const displayData = computed(() => frozenSnapshot.value ?? {
   revisionsByPeriod: data.value.revisionsByPeriod,
   allPeople: data.value.allPeople,
@@ -229,6 +196,9 @@ const displayData = computed(() => frozenSnapshot.value ?? {
   avgIntervalByPerson: data.value.avgIntervalByPerson,
   upcomingRevisions: data.value.upcomingRevisions,
 })
+
+// 🟢 NOVO — o summary exibido também respeita o congelamento durante export
+const displayRevisionsSummary = computed(() => frozenSnapshot.value?.revisionsSummary ?? revisionsSummary.value)
 
 const displayPagination = computed(() => frozenSnapshot.value?.pagination ?? pagination)
 
@@ -244,22 +214,19 @@ const handleAvgIntervalPage = (page) => fetchAvgIntervalByPerson(page)
 // ---------------------------------------------------------------------
 // KPIs
 // ---------------------------------------------------------------------
-// 🔧 CORRIGIDO — lêem de displayData (congelado durante exportação) em vez
-// de data.value diretamente, pra não piscar enquanto o PDF é gerado.
-const kpiTotalRevisoes = computed(() => displayData.value.revisionsByPeriod.length)
-
-const kpiVeiculosAtendidos = computed(
-  () => new Set(displayData.value.revisionsByPeriod.map((r) => r.vehicle)).size
-)
-
-const kpiClientesAtendidos = computed(
-  () => new Set(displayData.value.revisionsByPeriod.map((r) => r.person_name)).size
-)
-
-const kpiCustoTotal = computed(() =>
-  displayData.value.revisionsByPeriod.reduce((sum, r) => sum + Number(r.cost || 0), 0)
-)
-
+// 🔧 CORRIGIDO — CAUSA RAIZ DO BUG: antes esses KPIs eram calculados
+// fazendo .length / .reduce() / new Set() em cima de
+// displayData.value.revisionsByPeriod, que é SÓ A PÁGINA ATUAL (15 itens
+// por padrão). Com dezenas de páginas de revisões, os cards sempre
+// mostravam no máximo 15 — mesmo aplicando o filtro de data corretamente
+// (o filtro funcionava, mas o cálculo nunca via mais que uma página).
+// Agora lêem direto de displayRevisionsSummary, que vem do endpoint
+// dedicado revisionsPeriodSummary (COUNT/SUM/COUNT DISTINCT calculados no
+// banco), refletindo sempre o total real do período filtrado.
+const kpiTotalRevisoes = computed(() => displayRevisionsSummary.value.total_revisions)
+const kpiVeiculosAtendidos = computed(() => displayRevisionsSummary.value.vehicles_count)
+const kpiClientesAtendidos = computed(() => displayRevisionsSummary.value.people_count)
+const kpiCustoTotal = computed(() => displayRevisionsSummary.value.total_cost)
 const kpiTicketMedio = computed(() =>
   kpiTotalRevisoes.value ? kpiCustoTotal.value / kpiTotalRevisoes.value : 0
 )
@@ -267,11 +234,6 @@ const kpiTicketMedio = computed(() =>
 const formatCurrency = (value) =>
   Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-// 🔧 CORRIGIDO — extraído do computed pra função pura, reaproveitada tanto
-// pela tela (paginada, 15 itens por vez) quanto pela exportação em PDF
-// (todas as páginas juntas). Antes essa lógica só existia dentro do
-// computed, então a exportação não tinha como aplicá-la aos dados
-// completos buscados via fetchAllRows.
 const buildUpcomingWithStatus = (rows) => {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -296,7 +258,6 @@ const buildUpcomingWithStatus = (rows) => {
     .sort((a, b) => (a._rawDate ?? Infinity) - (b._rawDate ?? Infinity))
 }
 
-// 🔧 CORRIGIDO — usa displayData (congelado durante exportação)
 const upcomingWithStatus = computed(() => buildUpcomingWithStatus(displayData.value.upcomingRevisions))
 
 const kpiProximasRevisoes = computed(
@@ -306,13 +267,10 @@ const kpiProximasRevisoes = computed(
 // ---------------------------------------------------------------------
 // TABELAS FORMATADAS
 // ---------------------------------------------------------------------
-// 🔧 CORRIGIDO — usam displayData (congelado durante exportação)
 const revisionsByPeriodFormatted = computed(() =>
   displayData.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) }))
 )
 
-// Telefone chega do backend só com dígitos (ex: "11987654321"); aplica a
-// mesma máscara usada no formulário de cadastro pra exibir "(00) 00000-0000".
 const allPeopleFormatted = computed(() =>
   displayData.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) }))
 )
@@ -320,17 +278,6 @@ const allPeopleFormatted = computed(() =>
 // ---------------------------------------------------------------------
 // GRÁFICOS — 3 categorias de gênero
 // ---------------------------------------------------------------------
-// Não precisam de displayData: essas fontes (vehiclesByGender,
-// peopleByGender, brandsByGender, rankings) nunca são tocadas por
-// fetchAllRows durante uma exportação — só revisionsByPeriod, allPeople,
-// vehiclesByPerson, avgIntervalByPerson e upcomingRevisions são.
-//
-// 🔧 CORRIGIDO — antes fazia um map() 1-para-1 direto em cima das linhas
-// cruas (data.value.vehiclesByGender), o que gerava fatias duplicadas de
-// "Outros" quando a API devolvia mais de uma linha caindo nesse grupo
-// (gender = 'O' e gender = null vinham como linhas separadas). Agora usa
-// aggregateByGender() pra somar tudo isso numa única fatia antes de
-// montar o gráfico.
 const vehiclesByGenderChart = computed(() => {
   const aggregated = aggregateByGender(data.value.vehiclesByGender)
   return {
@@ -371,10 +318,6 @@ const peopleRevisionItems = computed(() =>
   data.value.peopleRevisionRanking.map((p) => ({ label: p.person_name, value: p.count }))
 )
 
-// 🔧 CORRIGIDO — não muda de comportamento (M e F nunca duplicavam, só
-// "Outros" duplicava), mas segue lendo direto do array cru
-// (data.value.peopleByGender), não do agregado — aqui é busca pontual por
-// gênero específico, não soma de grupo.
 const avgAgeMale = computed(() => data.value.peopleByGender.find((g) => g.gender === 'M')?.avg_age ?? '—')
 const avgAgeFemale = computed(() => data.value.peopleByGender.find((g) => g.gender === 'F')?.avg_age ?? '—')
 
@@ -388,43 +331,14 @@ const activeDetailTab = ref('revisions')
 // ---------------------------------------------------------------------
 // SCROLL AUTOMÁTICO PARA SEÇÃO VIA ÂNCORA
 // ---------------------------------------------------------------------
-// 🟢 NOVO — usado pelos links "Ver relatório" dos StatCards no Dashboard e
-// pelo link "Ver relatórios" do UpcomingRevisionsCard.
-//
-// Duas famílias de âncora:
-// - Seções fixas, sempre no DOM: "#proximas-revisoes", "#secao-financeiro"
-//   -> só rola até o id.
-// - Abas de detalhe, controladas por estado (activeDetailTab), não por
-//   rota: "#aba-veiculos", "#aba-pessoas", "#aba-revisoes" -> primeiro
-//   troca a aba ativa, só então rola até o container "#secao-detalhes"
-//   (só a aba ativa está no DOM por vez, então não dá pra apontar um id
-//   fixo direto pra dentro de cada aba).
 const TAB_HASH_MAP = {
   '#aba-revisoes': 'revisions',
   '#aba-veiculos': 'vehicles',
   '#aba-pessoas': 'people',
 }
 
-// Ajuste HEADER_OFFSET pra bater com a altura real do header sticky do seu
-// AppShell (inclua qualquer padding/margem extra que você queira de respiro).
 const HEADER_OFFSET = 96
 
-// 🔧 CORRIGIDO — causa raiz do "Pessoas não centraliza": usávamos
-// el.scrollIntoView({ block: 'start' }), mas o navegador NÃO CONSEGUE
-// rolar além do fim do documento. A aba "Pessoas" tem a tabela mais curta
-// (menos colunas/linhas que Veículos e Revisões), então a página como um
-// todo às vezes não tem altura suficiente abaixo de "#secao-detalhes" pra
-// empurrá-la até o topo do viewport — o scroll para no fim da página,
-// deixando a seção baixa/cortada, mesmo que o alvo esteja "certo".
-//
-// A correção: calculamos a posição manualmente e, se a página não tiver
-// espaço suficiente pra rolar até lá, injetamos um espaçador temporário no
-// fim da página do tamanho exato que falta — garantindo que sempre exista
-// espaço pra centralizar a seção, independente de quão curto seja o
-// conteúdo da aba. O espaçador só é removido depois que o scroll de fato
-// termina de se mover (não num timeout fixo, que cortaria a animação no
-// meio do caminho justamente nas distâncias mais longas, como a de
-// "Pessoas").
 const scrollSpacerHeight = ref(0)
 
 const waitForScrollToSettle = (target, { tolerance = 2, maxWait = 3000 } = {}) => {
@@ -446,8 +360,6 @@ const waitForScrollToSettle = (target, { tolerance = 2, maxWait = 3000 } = {}) =
       stableFrames = stoppedMoving ? stableFrames + 1 : 0
       lastY = currentY
 
-      // parou de se mover por vários frames seguidos (ex: bateu no fim da
-      // página antes de alcançar o alvo) — não faz sentido continuar esperando
       if (stableFrames > 10) {
         resolve()
         return
@@ -469,17 +381,13 @@ const scrollToTarget = async (targetId) => {
   const missing = desiredTop - maxScrollTop
 
   if (missing > 0) {
-    // +24px de folga, pra não parar bem na borda
     scrollSpacerHeight.value = Math.ceil(missing) + 24
-    // espera o espaçador entrar no DOM antes de calcular o scroll máximo de novo
     await nextTick()
   }
 
   const target = Math.max(desiredTop, 0)
   window.scrollTo({ top: target, behavior: 'smooth' })
 
-  // só remove o espaçador depois que o scroll de fato assentou no alvo —
-  // nada de timeout fixo, que cortaria distâncias longas no meio do caminho
   await waitForScrollToSettle(target)
   scrollSpacerHeight.value = 0
 }
@@ -495,18 +403,14 @@ const scrollToHashSection = async () => {
   await scrollToTarget(targetId)
 }
 
-// cobre o caso de vir de outra rota com o hash já na URL, ou de já estar em
-// /relatorios e clicar de novo no link (o hash muda mas o componente não remonta)
 watch(() => route.hash, scrollToHashSection)
 
-// cobre o caso de a página já estar carregada (ex: cache do vue-query) e o
-// hash já vir presente logo no mount
 watch(isLoading, (loading) => {
   if (!loading) scrollToHashSection()
 })
 
 // ---------------------------------------------------------------------
-// MODAL DE REVISÕES — aberto ao clicar em uma linha das tabelas de revisões
+// MODAL DE REVISÕES
 // ---------------------------------------------------------------------
 const isRevisionsModalOpen = ref(false)
 const selectedPerson = ref(null)
@@ -514,7 +418,7 @@ const highlightVehicleId = ref(null)
 const highlightRevisionId = ref(null)
 
 const openRevisionsModal = ({ personId, personName, vehicleId = null, revisionId = null }) => {
-  if (!personId) return // sem person_id não dá pra abrir o modal
+  if (!personId) return
   selectedPerson.value = { id: personId, name: personName }
   highlightVehicleId.value = vehicleId
   highlightRevisionId.value = revisionId
@@ -528,12 +432,10 @@ const closeRevisionsModal = () => {
   highlightRevisionId.value = null
 }
 
-// "Tempo médio entre revisões" — sem revisão específica, abre a listagem normal da pessoa
 const handleAvgIntervalRowClick = (row) => {
   openRevisionsModal({ personId: row.person_id, personName: row.person_name })
 }
 
-// "Revisões no período selecionado" — tem a revisão exata, abre já em modo edição
 const handleRevisionsByPeriodRowClick = (row) => {
   openRevisionsModal({
     personId: row.person_id,
@@ -544,7 +446,7 @@ const handleRevisionsByPeriodRowClick = (row) => {
 }
 
 // ---------------------------------------------------------------------
-// MODAL DE CADASTRO/EDIÇÃO DE PESSOA — aberto ao clicar em uma linha da aba "Pessoas"
+// MODAL DE CADASTRO/EDIÇÃO DE PESSOA
 // ---------------------------------------------------------------------
 const isPersonModalOpen = ref(false)
 const editingPerson = ref(null)
@@ -566,7 +468,6 @@ const handlePersonSubmit = async (payload) => {
     await updatePerson(editingPerson.value.id, payload)
     toast.success('Pessoa atualizada com sucesso!')
     closePersonModal()
-    // recarrega a página atual da tabela pra refletir a edição
     await fetchAllPeople(pagination.allPeople.currentPage)
   } catch (error) {
     const rawMessage = error.response?.data?.message ?? error.response?.data?.error
@@ -576,14 +477,12 @@ const handlePersonSubmit = async (payload) => {
   }
 }
 
-// "Todas as pessoas" — abre o modal de edição da pessoa clicada
 const handleAllPeopleRowClick = (row) => {
   openPersonModal(row)
 }
 
 // ---------------------------------------------------------------------
-// MODAL DE VEÍCULOS DA PESSOA — aberto ao clicar em uma linha da aba "Veículos",
-// já em modo edição do veículo clicado
+// MODAL DE VEÍCULOS DA PESSOA
 // ---------------------------------------------------------------------
 const isVehicleModalOpen = ref(false)
 const personForVehicle = ref(null)
@@ -599,26 +498,16 @@ const closeVehicleModal = async () => {
   isVehicleModalOpen.value = false
   personForVehicle.value = null
   highlightVehicleIdForModal.value = null
-  // recarrega a página atual da tabela pra refletir qualquer edição feita no modal
   await fetchVehiclesByPerson(pagination.vehiclesByPerson.currentPage)
 }
 
-// "Todos os veículos por pessoa" — abre o modal já em edição no veículo clicado
 const handleVehiclesByPersonRowClick = (row) => {
   openVehicleModal({ id: row.person_id, name: row.person_name }, row.vehicle_id)
 }
 
 // ---------------------------------------------------------------------
-// EXPORTAÇÃO EM PDF — agora 100% vetorial (jsPDF + autoTable), sem
-// html2canvas. Cada botão dispara um PDF diferente, todos SEM a
-// paginação de 10-em-10 da tela: buscamos TODOS os registros antes de
-// gerar o arquivo.
-//
-// 🔧 CORRIGIDO — isExportingSection foi movido pra cima (perto de
-// displayData/frozenSnapshot), não é mais declarado aqui. O resto da
-// lógica de exportação continua igual.
+// EXPORTAÇÃO EM PDF
 // ---------------------------------------------------------------------
-
 const withExportLoading = async (key, task) => {
   if (isExportingSection.value) return
   isExportingSection.value = key
@@ -632,16 +521,6 @@ const withExportLoading = async (key, task) => {
   }
 }
 
-// 🔴 AQUI — os fetchers de useReports() são paginados (retornam só uma
-// página por vez, sobrescrevendo data.value.X). Pra exportar TODOS os
-// registros sem paginação, buscamos página por página e acumulamos aqui,
-// depois restauramos a página que o usuário estava vendo na tela. Isso
-// continua escrevendo no data/pagination "ao vivo" — mas agora, como a
-// tela lê de displayData/displayPagination (congelados durante a
-// exportação), essas escritas intermediárias não aparecem visualmente.
-// O ideal a longo prazo é um endpoint dedicado no backend que devolva
-// tudo de uma vez (mais eficiente que N requisições), mas isso já
-// resolve sem precisar mexer na API agora.
 const fetchAllRows = async (fetchPage, getRows, getPagination, restorePage) => {
   const collected = []
   let page = 1
@@ -670,26 +549,16 @@ const buildOverviewPayload = () => ({
   ],
   brandsRanking: brandsRevisionItems.value,
   peopleRanking: peopleRevisionItems.value,
-  // 🔧 CORRIGIDO — usa aggregateByGender pra evitar duas linhas "Outros"
-  // também na quebra por gênero exportada no PDF de visão geral.
   genderBreakdown: [
     ...aggregateByGender(data.value.vehiclesByGender).map((g) => ['Veículos', g.label, String(g.value)]),
     ...aggregateByGender(data.value.peopleByGender).map((g) => ['Pessoas', g.label, String(g.value)]),
   ],
 })
 
-// 1) Visão geral (KPIs + rankings + quebra por gênero)
 const exportOverviewPDF = () => withExportLoading('overview', () => {
   exportOverview(buildOverviewPayload())
 })
 
-// 2) Próximas revisões
-// 🔧 CORRIGIDO — esse painel É paginado no backend (15 por página). O
-// código antigo exportava só `upcomingWithStatus.value` (a página atual
-// em tela), o que gerava um PDF com apenas 15 itens mesmo havendo mais
-// páginas. Agora busca TODAS as páginas via fetchAllRows — igual às
-// exportações de veículos/pessoas/revisões — aplica buildUpcomingWithStatus
-// no conjunto completo, e restaura a página que estava sendo exibida.
 const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () => {
   const originalPage = pagination.upcomingRevisions.currentPage
   const rawRows = await fetchAllRows(
@@ -712,12 +581,6 @@ const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () 
   })
 })
 
-// 2b) Revisões no período selecionado — tabela isolada, com TODOS os
-// registros do período filtrado (sem a paginação de 10-em-10 da tela).
-// 🟢 NOVO — antes essa tabela só saía combinada dentro do PDF de
-// "Revisões" (botão da barra de abas, exportRevisionsTablePDF, que junta
-// intervalo médio + período). Este botão exporta só ela, isolada, igual
-// ao padrão do card "Próximas revisões".
 const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', async () => {
   const originalPeriodPage = pagination.revisionsByPeriod.currentPage
   const periodRows = await fetchAllRows(
@@ -740,7 +603,6 @@ const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', as
   })
 })
 
-// 3) Revisões — combina "tempo médio entre revisões" + "revisões no período", TUDO sem paginação
 const exportRevisionsTablePDF = () => withExportLoading('revisions', async () => {
   const originalAvgPage = pagination.avgIntervalByPerson.currentPage
   const avgRows = await fetchAllRows(
@@ -785,7 +647,6 @@ const exportRevisionsTablePDF = () => withExportLoading('revisions', async () =>
   })
 })
 
-// 4) Veículos — todos os registros, sem paginação
 const exportVehiclesTablePDF = () => withExportLoading('vehicles', async () => {
   const originalPage = pagination.vehiclesByPerson.currentPage
   const rows = await fetchAllRows(
@@ -808,7 +669,6 @@ const exportVehiclesTablePDF = () => withExportLoading('vehicles', async () => {
   })
 })
 
-// 5) Pessoas — todos os registros, sem paginação
 const exportPeopleTablePDF = () => withExportLoading('people', async () => {
   const originalPage = pagination.allPeople.currentPage
   const rows = await fetchAllRows(
@@ -830,7 +690,6 @@ const exportPeopleTablePDF = () => withExportLoading('people', async () => {
   })
 })
 
-// 6) Relatório completo — visão geral + as 4 tabelas, tudo num único PDF, sem paginação
 const exportFullReportPDF = () => withExportLoading('full', async () => {
   const overviewPayload = buildOverviewPayload()
 
@@ -910,8 +769,6 @@ const exportFullReportPDF = () => withExportLoading('full', async () => {
   })
 })
 
-// 🟢 NOVO — qual export usar/qual chave de loading checar, de acordo com a
-// aba de detalhe ativa no momento (usado no botão da barra de abas)
 const activeTabExportHandler = computed(() => {
   if (activeDetailTab.value === 'vehicles') return exportVehiclesTablePDF
   if (activeDetailTab.value === 'people') return exportPeopleTablePDF
@@ -924,9 +781,6 @@ const activeTabExportKey = computed(() => {
   return 'revisions'
 })
 
-// 🟢 NOVO — rótulo em português da aba ativa, só para exibição no botão.
-// activeTabExportKey continua em inglês porque é comparado com
-// isExportingSection (chave interna usada em withExportLoading).
 const activeTabExportLabel = computed(() => {
   if (activeDetailTab.value === 'vehicles') return 'Veículos'
   if (activeDetailTab.value === 'people') return 'Pessoas'
@@ -1015,13 +869,6 @@ onMounted(loadAll)
             </template>
           </div>
 
-          <!-- 🟢 NOVO — exporta só KPIs + rankings + quebra por gênero -->
-          <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting (qualquer
-               exportação em andamento), não só isExportingSection === 'overview'.
-               Antes, se outra exportação estivesse rodando, esse botão parecia
-               clicável mas o clique não fazia nada (bloqueado silenciosamente
-               em withExportLoading). Agora ele fica visualmente desabilitado
-               nesse caso, dando feedback real ao usuário. -->
           <button
             type="button"
             class="flex shrink-0 items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors  disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
@@ -1035,16 +882,14 @@ onMounted(loadAll)
         </div>
 
         <!-- ====== KPIs ====== -->
-        <!-- 🟢 id usado como âncora de scroll (#secao-financeiro),
-             alvo do card "Investido" no Dashboard -->
         <div
           id="secao-financeiro"
           class="mb-8 scroll-mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
           style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))"
         >
-          <KpiCard label="Revisões" :value="kpiTotalRevisoes" :icon="Wrench" accent="brand" :loading="isLoading" />
-          <KpiCard label="Veículos atendidos" :value="kpiVeiculosAtendidos" :icon="Car" accent="neutral" :loading="isLoading" />
-          <KpiCard label="Clientes atendidos" :value="kpiClientesAtendidos" :icon="Users" accent="neutral" :loading="isLoading" />
+          <KpiCard label="Revisões" :value="kpiTotalRevisoes" :icon="Wrench" accent="brand" :loading="isLoading || tableLoading.revisionsSummary" />
+          <KpiCard label="Veículos atendidos" :value="kpiVeiculosAtendidos" :icon="Car" accent="neutral" :loading="isLoading || tableLoading.revisionsSummary" />
+          <KpiCard label="Clientes atendidos" :value="kpiClientesAtendidos" :icon="Users" accent="neutral" :loading="isLoading || tableLoading.revisionsSummary" />
           <KpiCard
             label="Próximas revisões"
             :value="kpiProximasRevisoes"
@@ -1053,8 +898,8 @@ onMounted(loadAll)
             hint="atrasadas ou nos próx. 7 dias"
             :loading="isLoading"
           />
-          <KpiCard label="Custo total" :value="formatCurrency(kpiCustoTotal)" :icon="DollarSign" accent="success" :loading="isLoading" />
-          <KpiCard label="Ticket médio" :value="formatCurrency(kpiTicketMedio)" :icon="Receipt" accent="brand" :loading="isLoading" />
+          <KpiCard label="Custo total" :value="formatCurrency(kpiCustoTotal)" :icon="DollarSign" accent="success" :loading="isLoading || tableLoading.revisionsSummary" />
+          <KpiCard label="Ticket médio" :value="formatCurrency(kpiTicketMedio)" :icon="Receipt" accent="brand" :loading="isLoading || tableLoading.revisionsSummary" />
         </div>
 
         <!-- ====== RANKINGS ====== -->
@@ -1087,9 +932,6 @@ onMounted(loadAll)
         </div>
 
         <!-- ====== ALERTAS / PRÓXIMAS REVISÕES ====== -->
-        <!-- 🟢 id usado como âncora de scroll (#proximas-revisoes),
-             alvo do link "Ver relatórios" no UpcomingRevisionsCard e do
-             card "Revisões" no Dashboard -->
         <ReportPanel
           id="proximas-revisoes"
           title="Próximas revisões"
@@ -1097,7 +939,6 @@ onMounted(loadAll)
           class="mb-8 scroll-mt-6"
         >
           <div class="mb-3 flex justify-end">
-            <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting -->
             <button
               type="button"
               class="flex items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
@@ -1114,10 +955,6 @@ onMounted(loadAll)
       </div>
 
       <!-- ====== TABELAS DETALHADAS ====== -->
-      <!-- 🟢 NOVO — id usado como âncora de scroll ("#secao-detalhes"),
-           alvo indireto dos cards "Pessoas" e "Veículos" no Dashboard.
-           Eles apontam pra "#aba-pessoas" / "#aba-veiculos", que trocam
-           activeDetailTab (ver TAB_HASH_MAP) e então rolam pra cá. -->
       <div id="secao-detalhes" class="scroll-mt-6">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-ink-100">
           <div class="flex gap-2">
@@ -1139,9 +976,6 @@ onMounted(loadAll)
             </button>
           </div>
 
-          <!-- 🟢 NOVO — exporta a aba de detalhe ativa no momento, com TODOS
-               os registros (sem a paginação de 10-em-10 da tabela na tela) -->
-          <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting -->
           <button
             type="button"
             class="mb-2 flex shrink-0 items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
@@ -1173,7 +1007,6 @@ onMounted(loadAll)
 
             <ReportPanel title="Revisões no período selecionado">
               <div class="mb-3 flex justify-end">
-                <!-- 🔧 CORRIGIDO — :disabled agora usa isExporting -->
                 <button
                   type="button"
                   class="flex items-center gap-1.5 rounded-lg cursor-pointer hover:bg-amber-50/50 border border-ink-200 px-3 py-1.5 text-xs font-medium text-ink-600 transition-colors hover:bg-ink-50 disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
@@ -1241,10 +1074,6 @@ onMounted(loadAll)
         </div>
       </div>
 
-      <!-- 🟢 NOVO — espaçador temporário usado por scrollToTarget para
-           garantir espaço de rolagem suficiente em abas com pouco
-           conteúdo (ex: "Pessoas"). Fica com altura 0 na maior parte do
-           tempo; só cresce durante um scroll automático via âncora. -->
       <div :style="{ height: scrollSpacerHeight + 'px' }" aria-hidden="true" />
     </template>
 
