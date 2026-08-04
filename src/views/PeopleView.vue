@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { Users, Plus, Pencil, Trash2, Car, Wrench, Mail, Phone, IdCard, Search, X, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown } from '@lucide/vue'
+import { Users, Plus, Pencil, Trash2, Car, Wrench, Mail, Phone, IdCard, Search, X, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, ArrowUpDown, RefreshCw } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import EmptyState from '../components/dashboard/EmptyState.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -44,6 +44,25 @@ const personForVehicle = ref(null)
 
 const isRevisionsModalOpen = ref(false)
 const personForRevisions = ref(null)
+
+// 🟢 NOVO — botão "Atualizar" manual. Rechama a página atual (preservando
+// filtros e paginação já aplicados), sem dar reload na página inteira.
+// Resolve o mesmo problema do Painel: cadastrar/editar pessoa em outra
+// aba/módulo não reflete aqui sozinho até reload.
+const isRefreshing = ref(false)
+
+const refreshPeople = async () => {
+  if (isRefreshing.value) return
+  isRefreshing.value = true
+  try {
+    await fetchPeople(currentPage.value)
+    toast.success('Dados atualizados!')
+  } catch (error) {
+    toast.error('Não foi possível atualizar os dados.')
+  } finally {
+    isRefreshing.value = false
+  }
+}
 
 // --- Filtros (agora buscam no backend, em todas as pessoas) ---
 // 🟢 NOVO — limites de caracteres por campo, usados no `maxlength` do HTML,
@@ -306,6 +325,16 @@ const sanitizeNumericFilter = (field, maxLength) => {
 <template>
   <AppShell title="Proprietários" subtitle="Gerencie as pessoas cadastradas.">
     <template #actions>
+      <!-- 🟢 NOVO — botão de atualizar manual, sem reload de página -->
+      <BaseButton
+        variant="secondary"
+        :disabled="isRefreshing"
+        class="flex items-center justify-center gap-2 cursor-pointer bg-brand-600 hover:bg-brand-500 text-white"
+        @click="refreshPeople"
+      >
+        <RefreshCw :size="16" :class="isRefreshing ? 'animate-spin' : ''" />
+        {{ isRefreshing ? 'Atualizando...' : 'Atualizar' }}
+      </BaseButton>
       <BaseButton v-if="people.length || hasActiveFilters" class="w-full sm:w-auto" @click="openNewPerson">
         <Plus :size="16" />
         Nova pessoa

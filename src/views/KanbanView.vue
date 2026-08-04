@@ -1,10 +1,11 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { Calendar, Clock, FileText, GripVertical, IdCard, Pencil, Search, X } from '@lucide/vue'
+import { Calendar, Clock, FileText, GripVertical, IdCard, Pencil, RefreshCw, Search, X } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 // mesmo modal já usado em Pessoas e Relatórios
 import RevisionsModal from '../components/people/RevisionsModal.vue'
+import BaseButton from '../components/ui/BaseButton.vue'
 import { revisionService } from '../services/revision.service'
 import { useToast } from '../composables/useToast'
 
@@ -49,6 +50,7 @@ const {
   data: revisoes,
   isLoading,
   error,
+  refetch,
 } = useQuery({
   queryKey: ['revisions-kanban'],
   queryFn: () => revisionService.list(),
@@ -57,6 +59,27 @@ const {
 watch(error, (err) => {
   if (err) toast.error(err.response?.data?.message ?? 'Não foi possível carregar as revisões.')
 })
+
+// ---------------------------------------------------------------------------
+// 🟢 NOVO — botão "Atualizar" manual, mesmo padrão usado na tela de
+// Proprietários. Reexecuta a query do board (refetch do TanStack Query),
+// sem dar reload na página inteira. Resolve o mesmo problema de mover um
+// card em outra aba/módulo e não refletir aqui sozinho até reload.
+// ---------------------------------------------------------------------------
+const isRefreshing = ref(false)
+
+const refreshRevisoes = async () => {
+  if (isRefreshing.value) return
+  isRefreshing.value = true
+  try {
+    await refetch()
+    toast.success('Dados atualizados!')
+  } catch (err) {
+    toast.error('Não foi possível atualizar os dados.')
+  } finally {
+    isRefreshing.value = false
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Filtros — todos seguem o mesmo padrão de input/limite/contador "fantasma"
@@ -284,6 +307,19 @@ const closeRevisionsModal = () => {
 
 <template>
   <AppShell title="Kanban de Revisões" subtitle="Acompanhe o andamento de cada revisão por etapa.">
+    <template #actions>
+      <!-- 🟢 NOVO — botão de atualizar manual, sem reload de página -->
+      <BaseButton
+        variant="secondary"
+        :disabled="isRefreshing"
+        class="flex items-center justify-center gap-2 cursor-pointer bg-brand-600 hover:bg-brand-500 text-white"
+        @click="refreshRevisoes"
+      >
+        <RefreshCw :size="16" :class="isRefreshing ? 'animate-spin' : ''" />
+        {{ isRefreshing ? 'Atualizando...' : 'Atualizar' }}
+      </BaseButton>
+    </template>
+
     <!-- Filtros — nome, descrição, placa e período, todos no mesmo padrão
          de cartão/inputs/contador/chip -->
     <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">

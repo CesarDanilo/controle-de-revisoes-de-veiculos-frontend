@@ -186,9 +186,9 @@ const closeVehicleFormModal = () => {
     <template #actions>
       <!-- 🟢 NOVO — botão de atualizar manual, sem reload de página -->
       <BaseButton
-        variant="outline"
+        variant="secondary"
         :disabled="isRefreshing"
-        class="flex items-center justify-center gap-2"
+        class="flex items-center justify-center gap-2 cursor-pointer bg-brand-600 hover:bg-brand-500 text-white"
         @click="refreshPage"
       >
         <RefreshCw :size="16" :class="isRefreshing ? 'animate-spin' : ''" />
