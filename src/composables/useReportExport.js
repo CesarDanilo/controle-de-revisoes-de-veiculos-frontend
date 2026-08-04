@@ -7,6 +7,7 @@ const MAX_POLL_ATTEMPTS = 150 // ~5 minutos, mesmo teto do timeout do Job
 export function useReportExport() {
   const isRequesting = ref(false) // aguardando o "pending" -> id
   const isPolling = ref(false)    // aguardando o Job terminar
+  const currentType = ref(null)   // tipo em exportação agora (pra saber qual botão está "Gerando...")
   const errorMessage = ref('')
 
   const triggerBrowserDownload = (blob, filename) => {
@@ -42,7 +43,12 @@ export function useReportExport() {
   }
 
   const exportReport = async (type, { start, end, filename } = {}) => {
+    // Evita disparar uma segunda exportação enquanto outra ainda está rodando
+    // (o composable é compartilhado por todos os botões da tela de Relatórios).
+    if (isRequesting.value || isPolling.value) return
+
     isRequesting.value = true
+    currentType.value = type
     errorMessage.value = ''
     try {
       const { id } = await reportExportService.request(type, { start, end })
@@ -58,8 +64,9 @@ export function useReportExport() {
     } finally {
       isRequesting.value = false
       isPolling.value = false
+      currentType.value = null
     }
   }
 
-  return { exportReport, isRequesting, isPolling, errorMessage }
+  return { exportReport, isRequesting, isPolling, currentType, errorMessage }
 }

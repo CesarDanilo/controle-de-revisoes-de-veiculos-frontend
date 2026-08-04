@@ -20,12 +20,22 @@ import VehicleFormModal from '../components/people/VehicleFormModal.vue'
 import { useReports } from '../composables/useReports'
 import { usePeople } from '../composables/usePeople'
 import { useToast } from '../composables/useToast'
-import { useReportPdf } from '../composables/useReportPdf'
+import { useReportExport } from '../composables/useReportExport'
+
 import { maskPhone } from '../utils/masks'
 
-import { useReportExport } from '../composables/useReportExport'
-const { exportReport, isRequesting: isQueueRequesting, isPolling: isQueuePolling } = useReportExport()
-const isExportingFull = computed(() => isQueueRequesting.value || isQueuePolling.value)
+// ---------------------------------------------------------------------
+// EXPORTAÇÃO VIA FILA (único composable — controla todos os botões)
+// ---------------------------------------------------------------------
+const { exportReport, isRequesting: isQueueRequesting, isPolling: isQueuePolling, currentType } = useReportExport()
+const isExporting = computed(() => currentType.value !== null)
+const isExportingFull = computed(() => currentType.value === 'full')
+const fullReportLabel = computed(() => {
+  if (currentType.value !== 'full') return 'Exportar relatório completo'
+  if (isQueueRequesting.value) return 'Enfileirando...'
+  if (isQueuePolling.value) return 'Gerando (fila)...'
+  return 'Exportar relatório completo'
+})
 
 const {
   data,
@@ -41,8 +51,8 @@ const {
   fetchAllPeople,
   fetchRevisionsByPeriod,
   fetchRevisionsPeriodSummary,
-  fetchBrandsRevisionRanking, // 🟢 NOVO — ranking de marcas agora tem fetch próprio, recebendo start/end
-  fetchPeopleRevisionRanking, // 🟢 NOVO — ranking de clientes agora tem fetch próprio, recebendo start/end
+  fetchBrandsRevisionRanking,
+  fetchPeopleRevisionRanking,
   fetchAvgIntervalByPerson,
   fetchUpcomingRevisions,
 } = useReports()
@@ -50,8 +60,6 @@ const {
 const { updatePerson } = usePeople()
 const toast = useToast()
 const route = useRoute()
-
-const { exportOverview, exportTable } = useReportPdf()
 
 // ---- Formatação de data dd/mm/aaaa (sem risco de shift de timezone) ----
 const formatDateBR = (value) => {
@@ -156,7 +164,7 @@ const loadAll = async () => {
   await Promise.all([
     fetchVehicleReports(),
     fetchPeopleReports(),
-    fetchRevisionReports(periodStart.value, periodEnd.value), // já dispara summary e rankings internamente
+    fetchRevisionReports(periodStart.value, periodEnd.value),
     fetchAvgIntervalByPerson(),
   ])
 }
@@ -164,51 +172,6 @@ const loadAll = async () => {
 const hasAnyData = computed(
   () => data.value.allVehicles.length || data.value.allPeople.length
 )
-
-// ---------------------------------------------------------------------
-// 🟢 "CONGELAMENTO" DA TELA DURANTE EXPORTAÇÃO
-// ---------------------------------------------------------------------
-const isExportingSection = ref(null)
-const isExporting = computed(() => isExportingSection.value !== null)
-
-const frozenSnapshot = ref(null)
-
-watch(isExportingSection, (newVal, oldVal) => {
-  const startedExporting = newVal !== null && oldVal === null
-  const finishedExporting = newVal === null && oldVal !== null
-
-  if (startedExporting) {
-    frozenSnapshot.value = {
-      revisionsByPeriod: data.value.revisionsByPeriod.map((row) => ({ ...row })),
-      revisionsSummary: { ...revisionsSummary.value },
-      allPeople: data.value.allPeople.map((row) => ({ ...row })),
-      vehiclesByPerson: data.value.vehiclesByPerson.map((row) => ({ ...row })),
-      avgIntervalByPerson: data.value.avgIntervalByPerson.map((row) => ({ ...row })),
-      upcomingRevisions: data.value.upcomingRevisions.map((row) => ({ ...row })),
-      pagination: {
-        revisionsByPeriod: { ...pagination.revisionsByPeriod },
-        allPeople: { ...pagination.allPeople },
-        vehiclesByPerson: { ...pagination.vehiclesByPerson },
-        avgIntervalByPerson: { ...pagination.avgIntervalByPerson },
-        upcomingRevisions: { ...pagination.upcomingRevisions },
-      },
-    }
-  } else if (finishedExporting) {
-    frozenSnapshot.value = null
-  }
-})
-
-const displayData = computed(() => frozenSnapshot.value ?? {
-  revisionsByPeriod: data.value.revisionsByPeriod,
-  allPeople: data.value.allPeople,
-  vehiclesByPerson: data.value.vehiclesByPerson,
-  avgIntervalByPerson: data.value.avgIntervalByPerson,
-  upcomingRevisions: data.value.upcomingRevisions,
-})
-
-const displayRevisionsSummary = computed(() => frozenSnapshot.value?.revisionsSummary ?? revisionsSummary.value)
-
-const displayPagination = computed(() => frozenSnapshot.value?.pagination ?? pagination)
 
 // ---------------------------------------------------------------------
 // PAGINAÇÃO — handlers de troca de página por tabela
@@ -222,10 +185,10 @@ const handleAvgIntervalPage = (page) => fetchAvgIntervalByPerson(page)
 // ---------------------------------------------------------------------
 // KPIs
 // ---------------------------------------------------------------------
-const kpiTotalRevisoes = computed(() => displayRevisionsSummary.value.total_revisions)
-const kpiVeiculosAtendidos = computed(() => displayRevisionsSummary.value.vehicles_count)
-const kpiClientesAtendidos = computed(() => displayRevisionsSummary.value.people_count)
-const kpiCustoTotal = computed(() => displayRevisionsSummary.value.total_cost)
+const kpiTotalRevisoes = computed(() => revisionsSummary.value.total_revisions)
+const kpiVeiculosAtendidos = computed(() => revisionsSummary.value.vehicles_count)
+const kpiClientesAtendidos = computed(() => revisionsSummary.value.people_count)
+const kpiCustoTotal = computed(() => revisionsSummary.value.total_cost)
 const kpiTicketMedio = computed(() =>
   kpiTotalRevisoes.value ? kpiCustoTotal.value / kpiTotalRevisoes.value : 0
 )
@@ -260,7 +223,7 @@ const buildUpcomingWithStatus = (rows) => {
     .sort((a, b) => (a._rawDate ?? Infinity) - (b._rawDate ?? Infinity))
 }
 
-const upcomingWithStatus = computed(() => buildUpcomingWithStatus(displayData.value.upcomingRevisions))
+const upcomingWithStatus = computed(() => buildUpcomingWithStatus(data.value.upcomingRevisions))
 
 const kpiProximasRevisoes = computed(
   () => upcomingWithStatus.value.filter(
@@ -272,11 +235,11 @@ const kpiProximasRevisoes = computed(
 // TABELAS FORMATADAS
 // ---------------------------------------------------------------------
 const revisionsByPeriodFormatted = computed(() =>
-  displayData.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) }))
+  data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) }))
 )
 
 const allPeopleFormatted = computed(() =>
-  displayData.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) }))
+  data.value.allPeople.map((row) => ({ ...row, phone: maskPhone(row.phone) }))
 )
 
 // ---------------------------------------------------------------------
@@ -341,20 +304,6 @@ const TAB_HASH_MAP = {
   '#aba-pessoas': 'people',
 }
 
-// 🔧 CORRIGIDO — a correção anterior (offset de <header> fixo) partia do
-// pressuposto de que a página inteira rola na `window`. Só que o layout
-// real usa um sidebar fixo à esquerda + uma área de conteúdo com o próprio
-// scroll interno (overflow-y-auto), então `window.scrollTo` não move o
-// container certo — por isso a aba "sobrava" lá embaixo, fora da área
-// visível, mesmo com o offset ajustado.
-//
-// Agora a lógica:
-// 1) descobre automaticamente QUAL elemento realmente rola (a window ou
-//    um container pai com overflow), subindo pela árvore a partir do
-//    próprio alvo do scroll — funciona com qualquer um dos dois layouts;
-// 2) em vez de depender de um offset de header fixo, calcula a posição
-//    real do alvo dentro DESSE container (não da window), e alinha o
-//    alvo no topo da área visível com uma margem pequena.
 const isWindowContainer = (container) =>
   container === document.scrollingElement || container === document.documentElement
 
@@ -387,19 +336,6 @@ const scrollContainerTo = (container, top) => {
   }
 }
 
-// 🎛️ AJUSTE MANUAL — esse é o ÚNICO número que controla onde a seção
-// (barra de abas + ReportPanel/ReportTable) para na tela depois do
-// redirecionamento. É a distância, em pixels, entre o topo da área visível
-// (do container que rola) e o topo da seção depois do scroll.
-//
-// Como ajustar:
-// - Se a seção estiver aparecendo MUITO PRA BAIXO (com espaço vazio demais
-//   em cima dela) → DIMINUA esse número (pode até ser negativo).
-// - Se a seção estiver aparecendo MUITO PRA CIMA / colada no topo → AUMENTE
-//   esse número.
-//
-// Não tem nenhum outro lugar no arquivo que interfere nisso — é só esse
-// valor mesmo. Mude, salve, teste, repita até ficar do jeito que você quer.
 const SCROLL_TOP_OFFSET_PX = -800
 
 const scrollSpacerHeight = ref(0)
@@ -447,12 +383,9 @@ const scrollToTarget = async (targetId) => {
   const elTopRelativeToContainer =
     el.getBoundingClientRect().top - containerTopOnScreen + getContainerScrollTop(container)
 
-  // Usa o valor manual definido em SCROLL_TOP_OFFSET_PX lá em cima.
   const desiredTop = elTopRelativeToContainer - SCROLL_TOP_OFFSET_PX
   const maxScrollTop = getContainerMaxScrollTop(container)
 
-  // Só cria espaço extra artificial quando quem rola é mesmo a `window`
-  // (não faz sentido "esticar" um container de layout interno).
   if (isWindowContainer(container)) {
     const missing = desiredTop - maxScrollTop
     if (missing > 0) {
@@ -475,10 +408,6 @@ const scrollToHashSection = async () => {
   if (tabKey) activeDetailTab.value = tabKey
 
   await nextTick()
-  // O alvo é a barra de abas ("secao-detalhes-tabs"), não a div
-  // "secao-detalhes" inteira — assim o alinhamento no topo sempre acontece
-  // em cima de um elemento pequeno e de altura estável, em vez de depender
-  // do tamanho variável da tabela que vem logo abaixo.
   const targetId = tabKey ? 'secao-detalhes-tabs' : route.hash.slice(1)
   await scrollToTarget(targetId)
 }
@@ -586,104 +515,41 @@ const handleVehiclesByPersonRowClick = (row) => {
 }
 
 // ---------------------------------------------------------------------
-// EXPORTAÇÃO EM PDF
+// EXPORTAÇÃO EM PDF (tudo via fila — um único ponto de controle: currentType)
 // ---------------------------------------------------------------------
-const withExportLoading = async (key, task) => {
-  if (isExportingSection.value) return
-  isExportingSection.value = key
+const exportOverviewPDF = async () => {
   try {
-    await task()
+    await exportReport('overview', {
+      start: periodStart.value,
+      end: periodEnd.value,
+      filename: `visao-geral-${periodStart.value}-a-${periodEnd.value}.pdf`,
+    })
   } catch (error) {
-    console.error(`Erro ao exportar "${key}":`, error)
-    toast.error(`Não foi possível gerar o PDF: ${error?.message || 'erro desconhecido'}`)
-  } finally {
-    isExportingSection.value = null
+    toast.error(error.message || 'Não foi possível gerar o relatório.')
   }
 }
 
-const fetchAllRows = async (fetchPage, getRows, getPagination, restorePage) => {
-  const collected = []
-  let page = 1
-
-  await fetchPage(page)
-  collected.push(...getRows())
-  const lastPage = getPagination()?.lastPage ?? 1
-
-  for (page = 2; page <= lastPage; page++) {
-    await fetchPage(page)
-    collected.push(...getRows())
+const exportUpcomingRevisionsPDF = async () => {
+  try {
+    await exportReport('upcoming', { filename: 'proximas-revisoes.pdf' })
+  } catch (error) {
+    toast.error(error.message || 'Não foi possível gerar o relatório.')
   }
-
-  if (restorePage) await fetchPage(restorePage)
-  return collected
 }
 
-const buildOverviewPayload = () => ({
-  kpis: [
-    { label: 'Revisões', value: String(kpiTotalRevisoes.value) },
-    { label: 'Veículos atendidos', value: String(kpiVeiculosAtendidos.value) },
-    { label: 'Clientes atendidos', value: String(kpiClientesAtendidos.value) },
-    { label: 'Próximas revisões (atrasadas/próx. 7 dias)', value: String(kpiProximasRevisoes.value) },
-    { label: 'Custo total', value: formatCurrency(kpiCustoTotal.value) },
-    { label: 'Ticket médio', value: formatCurrency(kpiTicketMedio.value) },
-  ],
-  brandsRanking: brandsRevisionItems.value,
-  peopleRanking: peopleRevisionItems.value,
-  genderBreakdown: [
-    ...aggregateByGender(data.value.vehiclesByGender).map((g) => ['Veículos', g.label, String(g.value)]),
-    ...aggregateByGender(data.value.peopleByGender).map((g) => ['Pessoas', g.label, String(g.value)]),
-  ],
-})
+const exportRevisionsByPeriodPDF = async () => {
+  try {
+    await exportReport('period_revisions', {
+      start: periodStart.value,
+      end: periodEnd.value,
+      filename: `revisoes-periodo-${periodStart.value}-a-${periodEnd.value}.pdf`,
+    })
+  } catch (error) {
+    toast.error(error.message || 'Não foi possível gerar o relatório.')
+  }
+}
 
-const exportOverviewPDF = () => withExportLoading('overview', () => {
-  exportOverview(buildOverviewPayload())
-})
-
-const exportUpcomingRevisionsPDF = () => withExportLoading('upcoming', async () => {
-  const originalPage = pagination.upcomingRevisions.currentPage
-  const rawRows = await fetchAllRows(
-    (page) => fetchUpcomingRevisions(page),
-    () => data.value.upcomingRevisions,
-    () => pagination.upcomingRevisions,
-    originalPage,
-  )
-
-  exportTable({
-    title: 'Próximas revisões',
-    filenamePrefix: 'proximas-revisoes',
-    columns: [
-      { key: 'person_name', label: 'Pessoa' },
-      { key: 'vehicle', label: 'Veículo' },
-      { key: 'predicted_date_label', label: 'Previsão' },
-      { key: 'origin_label', label: 'Origem' },
-    ],
-    rows: buildUpcomingWithStatus(rawRows),
-  })
-})
-
-const exportRevisionsByPeriodPDF = () => withExportLoading('periodRevisions', async () => {
-  const originalPeriodPage = pagination.revisionsByPeriod.currentPage
-  const periodRows = await fetchAllRows(
-    (page) => fetchRevisionsByPeriod(periodStart.value, periodEnd.value, page),
-    () => data.value.revisionsByPeriod.map((row) => ({ ...row, date: formatDateBR(row.date) })),
-    () => pagination.revisionsByPeriod,
-    originalPeriodPage,
-  )
-
-  exportTable({
-    title: 'Revisões no período selecionado',
-    filenamePrefix: 'revisoes-periodo',
-    columns: [
-      { key: 'date', label: 'Data' },
-      { key: 'person_name', label: 'Pessoa' },
-      { key: 'vehicle', label: 'Veículo' },
-      { key: 'description', label: 'Descrição' },
-    ],
-    rows: periodRows,
-  })
-})
-
-const exportRevisionsTablePDF = () => withExportLoading('revisions', async () => {
+const exportRevisionsTablePDF = async () => {
   try {
     await exportReport('revisions', {
       start: periodStart.value,
@@ -693,27 +559,23 @@ const exportRevisionsTablePDF = () => withExportLoading('revisions', async () =>
   } catch (error) {
     toast.error(error.message || 'Não foi possível gerar o relatório.')
   }
-})
+}
 
-const exportVehiclesTablePDF = () => withExportLoading('vehicles', async () => {
+const exportVehiclesTablePDF = async () => {
   try {
-    await exportReport('vehicles', {
-      filename: 'veiculos.pdf',
-    })
+    await exportReport('vehicles', { filename: 'veiculos.pdf' })
   } catch (error) {
     toast.error(error.message || 'Não foi possível gerar o relatório.')
   }
-})
+}
 
-const exportPeopleTablePDF = () => withExportLoading('people', async () => {
+const exportPeopleTablePDF = async () => {
   try {
-    await exportReport('people', {
-      filename: 'pessoas.pdf',
-    })
+    await exportReport('people', { filename: 'pessoas.pdf' })
   } catch (error) {
     toast.error(error.message || 'Não foi possível gerar o relatório.')
   }
-})
+}
 
 const exportFullReportPDFQueued = async () => {
   try {
@@ -760,7 +622,7 @@ onMounted(loadAll)
       >
         <RefreshCw v-if="isExportingFull" :size="16" class="animate-spin" />
         <Download v-else :size="16" />
-        {{ isQueueRequesting ? 'Enfileirando...' : isQueuePolling ? 'Gerando (fila)...' : 'Exportar relatório completo' }}
+        {{ fullReportLabel }}
       </button>
     </template>
 
@@ -832,9 +694,9 @@ onMounted(loadAll)
             :disabled="isExporting"
             @click="exportOverviewPDF"
           >
-            <RefreshCw v-if="isExportingSection === 'overview'" :size="13" class="animate-spin" />
+            <RefreshCw v-if="currentType === 'overview'" :size="13" class="animate-spin" />
             <Download v-else :size="13" />
-            {{ isExportingSection === 'overview' ? 'Gerando...' : 'Baixar visão geral (PDF)' }}
+            {{ currentType === 'overview' ? 'Gerando...' : 'Baixar visão geral (PDF)' }}
           </button>
         </div>
 
@@ -902,9 +764,9 @@ onMounted(loadAll)
               :disabled="isExporting"
               @click="exportUpcomingRevisionsPDF"
             >
-              <RefreshCw v-if="isExportingSection === 'upcoming'" :size="13" class="animate-spin" />
+              <RefreshCw v-if="currentType === 'upcoming'" :size="13" class="animate-spin" />
               <Download v-else :size="13" />
-              {{ isExportingSection === 'upcoming' ? 'Gerando...' : 'Baixar PDF' }}
+              {{ currentType === 'upcoming' ? 'Gerando...' : 'Baixar PDF' }}
             </button>
           </div>
           <UpcomingRevisionsPanel :items="upcomingWithStatus" />
@@ -939,9 +801,9 @@ onMounted(loadAll)
             :disabled="isExporting"
             @click="activeTabExportHandler()"
           >
-            <RefreshCw v-if="isExportingSection === activeTabExportKey" :size="13" class="animate-spin" />
+            <RefreshCw v-if="currentType === activeTabExportKey" :size="13" class="animate-spin" />
             <Download v-else :size="13" />
-            {{ isExportingSection === activeTabExportKey ? 'Gerando...' : 'Baixar PDF - ' + activeTabExportLabel }}
+            {{ currentType === activeTabExportKey ? 'Gerando...' : 'Baixar PDF - ' + activeTabExportLabel }}
           </button>
         </div>
 
@@ -953,8 +815,8 @@ onMounted(loadAll)
                   { key: 'person_name', label: 'Pessoa' },
                   { key: 'avg_days', label: 'Média (dias)' },
                 ]"
-                :rows="displayData.avgIntervalByPerson"
-                :pagination="displayPagination.avgIntervalByPerson"
+                :rows="data.avgIntervalByPerson"
+                :pagination="pagination.avgIntervalByPerson"
                 :loading="tableLoading.avgIntervalByPerson"
                 row-clickable
                 @page-change="handleAvgIntervalPage"
@@ -970,9 +832,9 @@ onMounted(loadAll)
                   :disabled="isExporting"
                   @click="exportRevisionsByPeriodPDF"
                 >
-                  <RefreshCw v-if="isExportingSection === 'periodRevisions'" :size="13" class="animate-spin" />
+                  <RefreshCw v-if="currentType === 'period_revisions'" :size="13" class="animate-spin" />
                   <Download v-else :size="13" />
-                  {{ isExportingSection === 'periodRevisions' ? 'Gerando...' : 'Baixar PDF' }}
+                  {{ currentType === 'period_revisions' ? 'Gerando...' : 'Baixar PDF' }}
                 </button>
               </div>
               <p v-if="!revisionsByPeriodFormatted.length" class="py-6 text-center text-sm text-ink-400">
@@ -987,7 +849,7 @@ onMounted(loadAll)
                   { key: 'description', label: 'Descrição' },
                 ]"
                 :rows="revisionsByPeriodFormatted"
-                :pagination="displayPagination.revisionsByPeriod"
+                :pagination="pagination.revisionsByPeriod"
                 :loading="tableLoading.revisionsByPeriod"
                 row-clickable
                 @page-change="handleRevisionsByPeriodPage"
@@ -1004,8 +866,8 @@ onMounted(loadAll)
                 { key: 'model', label: 'Modelo' },
                 { key: 'brand', label: 'Marca' },
               ]"
-              :rows="displayData.vehiclesByPerson"
-              :pagination="displayPagination.vehiclesByPerson"
+              :rows="data.vehiclesByPerson"
+              :pagination="pagination.vehiclesByPerson"
               :loading="tableLoading.vehiclesByPerson"
               row-clickable
               @page-change="handleVehiclesByPersonPage"
@@ -1021,7 +883,7 @@ onMounted(loadAll)
                 { key: 'phone', label: 'Telefone' },
               ]"
               :rows="allPeopleFormatted"
-              :pagination="displayPagination.allPeople"
+              :pagination="pagination.allPeople"
               :loading="tableLoading.allPeople"
               row-clickable
               @page-change="handleAllPeoplePage"
