@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, unref, watch } from 'vue'
-import { useQuery } from '@tanstack/vue-query'
-import { Users, Car, Wrench, Wallet } from '@lucide/vue'
+import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { Users, Car, Wrench, Wallet, RefreshCw } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import StatCard from '../components/dashboard/StatCard.vue'
@@ -18,8 +18,9 @@ import { dashboardService } from '../services/dashboard.service'
 // 🟡 MANTIDO — ainda precisamos da lista de pessoas pra localizar o
 // proprietário quando o usuário clica num veículo (RevisionsModal exige o
 // objeto "person" completo, não só o id).
-const { people, isLoading: peopleLoading, errorMessage: peopleError } = usePeople()
+const { people, isLoading: peopleLoading, errorMessage: peopleError, fetchPeople } = usePeople()
 const toast = useToast()
+const queryClient = useQueryClient()
 
 const formatCurrency = (value) =>
   Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -48,6 +49,36 @@ watch(summaryError, (err) => {
 // /reports/revisions/upcoming). O GettingStartedCard usa as contagens do
 // summary em vez de listas completas.
 const isLoading = computed(() => peopleLoading.value || summaryLoading.value)
+
+// 🟢 NOVO — botão "Atualizar" manual. O problema real: `dashboard-summary`
+// e o que o UpcomingRevisionsCard busca internamente ficam em cache do
+// Vue Query (não revalidam sozinhos ao trocar de módulo), e `usePeople`
+// busca a lista uma vez só via chamada direta (não é uma query cacheada
+// pelo Vue Query) — cadastrar uma pessoa em outra tela não invalida nada
+// disso automaticamente. Por isso o reload manual "resolvia" antes.
+//
+// invalidateQueries() sem filtro invalida TODAS as queries ativas do Vue
+// Query no momento (dashboard-summary + a query interna do
+// UpcomingRevisionsCard, sejam quais forem suas keys), forçando o refetch
+// de tudo que estiver montado na tela. fetchPeople(1) cobre a parte que
+// não passa pelo Vue Query.
+const isRefreshing = ref(false)
+
+const refreshPage = async () => {
+  if (isRefreshing.value) return
+  isRefreshing.value = true
+  try {
+    await Promise.all([
+      queryClient.invalidateQueries(),
+      fetchPeople(1),
+    ])
+    toast.success('Dados atualizados!')
+  } catch (error) {
+    toast.error('Não foi possível atualizar os dados.')
+  } finally {
+    isRefreshing.value = false
+  }
+}
 
 // 🟢 NOVO — critério pra decidir entre "onboarding" ou "painel normal": o
 // básico pra sair do estado zerado é ter pelo menos UM proprietário
@@ -153,6 +184,16 @@ const closeVehicleFormModal = () => {
          daqui; agora vive no corpo da página, condicionado ao estado dos
          dados (ver abaixo). -->
     <template #actions>
+      <!-- 🟢 NOVO — botão de atualizar manual, sem reload de página -->
+      <BaseButton
+        variant="outline"
+        :disabled="isRefreshing"
+        class="flex items-center justify-center gap-2"
+        @click="refreshPage"
+      >
+        <RefreshCw :size="16" :class="isRefreshing ? 'animate-spin' : ''" />
+        {{ isRefreshing ? 'Atualizando...' : 'Atualizar' }}
+      </BaseButton>
       <router-link to="/people">
         <BaseButton variant="outline">Proprietários</BaseButton>
       </router-link>
