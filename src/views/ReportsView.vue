@@ -27,14 +27,46 @@ import { maskPhone } from '../utils/masks'
 // ---------------------------------------------------------------------
 // EXPORTAÇÃO VIA FILA (único composable — controla todos os botões)
 // ---------------------------------------------------------------------
-const { exportReport, isRequesting: isQueueRequesting, isPolling: isQueuePolling, currentType } = useReportExport()
-const isExporting = computed(() => currentType.value !== null)
-const isExportingFull = computed(() => currentType.value === 'full')
+// 🟢 NOVO — retryAfter/isOnCooldown vêm do composable e refletem o 429
+// (limite/cooldown) retornado pelo backend.
+const {
+  exportReport,
+  isRequesting: isQueueRequesting,
+  isPolling: isQueuePolling,
+  currentType,
+  retryAfter,
+  isOnCooldown,
+} = useReportExport()
+
+// 🔴 FIX — isExporting agora também considera o cooldown, senão os
+// botões continuavam clicáveis durante os 30s de espera e disparavam
+// outro 429 na cara do usuário.
+const isExporting = computed(() => currentType.value !== null || isOnCooldown.value)
+const isExportingFull = computed(() => currentType.value === 'full' || isOnCooldown.value)
+
 const fullReportLabel = computed(() => {
+  if (isOnCooldown.value) return `Aguarde ${retryAfter.value}s`
   if (currentType.value !== 'full') return 'Exportar relatório completo'
   if (isQueueRequesting.value) return 'Enfileirando...'
   if (isQueuePolling.value) return 'Gerando (fila)...'
   return 'Exportar relatório completo'
+})
+
+// 🟢 NOVO — labels dos demais botões, cada um checando o cooldown
+// primeiro (mesmo padrão do fullReportLabel).
+const overviewExportLabel = computed(() => {
+  if (isOnCooldown.value) return `Aguarde ${retryAfter.value}s`
+  return currentType.value === 'overview' ? 'Gerando...' : 'Baixar visão geral (PDF)'
+})
+
+const upcomingExportLabel = computed(() => {
+  if (isOnCooldown.value) return `Aguarde ${retryAfter.value}s`
+  return currentType.value === 'upcoming' ? 'Gerando...' : 'Baixar PDF'
+})
+
+const periodRevisionsExportLabel = computed(() => {
+  if (isOnCooldown.value) return `Aguarde ${retryAfter.value}s`
+  return currentType.value === 'period_revisions' ? 'Gerando...' : 'Baixar PDF'
 })
 
 const {
@@ -607,6 +639,15 @@ const activeTabExportLabel = computed(() => {
   return 'Revisões'
 })
 
+// 🟢 NOVO — texto do botão "Baixar PDF - <aba ativa>", checando o
+// cooldown antes de checar se está gerando.
+const activeTabExportButtonLabel = computed(() => {
+  if (isOnCooldown.value) return `Aguarde ${retryAfter.value}s`
+  return currentType.value === activeTabExportKey.value
+    ? 'Gerando...'
+    : 'Baixar PDF - ' + activeTabExportLabel.value
+})
+
 onMounted(loadAll)
 </script>
 
@@ -620,7 +661,7 @@ onMounted(loadAll)
         :disabled="isExportingFull"
         @click="exportFullReportPDFQueued"
       >
-        <RefreshCw v-if="isExportingFull" :size="16" class="animate-spin" />
+        <RefreshCw v-if="isExportingFull && !isOnCooldown" :size="16" class="animate-spin" />
         <Download v-else :size="16" />
         {{ fullReportLabel }}
       </button>
@@ -694,9 +735,9 @@ onMounted(loadAll)
             :disabled="isExporting"
             @click="exportOverviewPDF"
           >
-            <RefreshCw v-if="currentType === 'overview'" :size="13" class="animate-spin" />
+            <RefreshCw v-if="currentType === 'overview' && !isOnCooldown" :size="13" class="animate-spin" />
             <Download v-else :size="13" />
-            {{ currentType === 'overview' ? 'Gerando...' : 'Baixar visão geral (PDF)' }}
+            {{ overviewExportLabel }}
           </button>
         </div>
 
@@ -764,9 +805,9 @@ onMounted(loadAll)
               :disabled="isExporting"
               @click="exportUpcomingRevisionsPDF"
             >
-              <RefreshCw v-if="currentType === 'upcoming'" :size="13" class="animate-spin" />
+              <RefreshCw v-if="currentType === 'upcoming' && !isOnCooldown" :size="13" class="animate-spin" />
               <Download v-else :size="13" />
-              {{ currentType === 'upcoming' ? 'Gerando...' : 'Baixar PDF' }}
+              {{ upcomingExportLabel }}
             </button>
           </div>
           <UpcomingRevisionsPanel :items="upcomingWithStatus" />
@@ -801,9 +842,9 @@ onMounted(loadAll)
             :disabled="isExporting"
             @click="activeTabExportHandler()"
           >
-            <RefreshCw v-if="currentType === activeTabExportKey" :size="13" class="animate-spin" />
+            <RefreshCw v-if="currentType === activeTabExportKey && !isOnCooldown" :size="13" class="animate-spin" />
             <Download v-else :size="13" />
-            {{ currentType === activeTabExportKey ? 'Gerando...' : 'Baixar PDF - ' + activeTabExportLabel }}
+            {{ activeTabExportButtonLabel }}
           </button>
         </div>
 
@@ -832,9 +873,9 @@ onMounted(loadAll)
                   :disabled="isExporting"
                   @click="exportRevisionsByPeriodPDF"
                 >
-                  <RefreshCw v-if="currentType === 'period_revisions'" :size="13" class="animate-spin" />
+                  <RefreshCw v-if="currentType === 'period_revisions' && !isOnCooldown" :size="13" class="animate-spin" />
                   <Download v-else :size="13" />
-                  {{ currentType === 'period_revisions' ? 'Gerando...' : 'Baixar PDF' }}
+                  {{ periodRevisionsExportLabel }}
                 </button>
               </div>
               <p v-if="!revisionsByPeriodFormatted.length" class="py-6 text-center text-sm text-ink-400">
