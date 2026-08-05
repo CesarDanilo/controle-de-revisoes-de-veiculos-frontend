@@ -195,10 +195,10 @@ const closeVehicleFormModal = () => {
         {{ isRefreshing ? 'Atualizando...' : 'Atualizar' }}
       </BaseButton>
       <router-link to="/people">
-        <BaseButton variant="outline">Proprietários</BaseButton>
+        <BaseButton class="cursor-pointer" variant="outline">Proprietários</BaseButton>
       </router-link>
       <router-link to="/relatorios">
-        <BaseButton variant="primary">Ver relatórios</BaseButton>
+        <BaseButton class="cursor-pointer" variant="primary">Ver relatórios</BaseButton>
       </router-link>
     </template>
 
