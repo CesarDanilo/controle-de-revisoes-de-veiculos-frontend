@@ -5,6 +5,9 @@ import { useUpcomingRevisions } from '../../composables/useUpcomingRevisions.js'
 import UpcomingRevisionsList from './UpcomingRevisionsList.vue'
 // 🔴 AQUI — mesmo modal já usado na tela de Pessoas, reaproveitado aqui
 import RevisionsModal from '../people/RevisionsModal.vue'
+// 🟢 NOVO — modal de escolha, aberto quando o veículo clicado tem mais de
+// uma revisão pendente
+import PendingRevisionsPickerModal from '../dashboard/PendingRevisionsPickerModal.vue'
 
 const {
   items,
@@ -75,7 +78,8 @@ const goToPage = (target) => {
 }
 
 // ---------------------------------------------------------------------
-// MODAL DE REVISÕES — aberto ao clicar num item da lista
+// MODAL DE REVISÕES — aberto ao clicar num item da lista (ou após a
+// escolha no modal de seleção, quando há mais de uma pendência)
 // ---------------------------------------------------------------------
 const isModalOpen = ref(false)
 const selectedPerson = ref(null)
@@ -86,29 +90,71 @@ const highlightRevisionId = ref(null)
 const prefillDate = ref(null)
 const prefillKm = ref(null)
 
-// clicar em qualquer item, mesmo os de data informada/estimada (que ainda
-// não são um registro de verdade), só entra em modo edição quando o item
-// é realmente uma revisão futura agendada (is_scheduled); nos demais
-// casos, abre o formulário de CRIAÇÃO já com a data (e KM) prevista
-// preenchidos.
-const handleSelect = (item) => {
+// ---------------------------------------------------------------------
+// 🟢 NOVO — MODAL DE ESCOLHA, quando o veículo tem >1 revisão pendente
+// ---------------------------------------------------------------------
+const pickerItem = ref(null)
+
+const pickerPredictions = computed(() => {
+  if (!pickerItem.value) return []
+  return pickerItem.value.predictions.map((prediction, index) => ({
+    key: `${pickerItem.value.vehicle_id}-${prediction.revision_id ?? index}`,
+    dateLabel: prediction.predicted_date_label,
+    kmLabel: prediction.predicted_km
+      ? `${Number(prediction.predicted_km).toLocaleString('pt-BR')} km`
+      : null,
+    originLabel: prediction.is_scheduled ? 'Agendada' : prediction.origin_label,
+    payload: prediction,
+  }))
+})
+
+// Abre de fato o RevisionsModal pra uma previsão específica (seja ela a
+// única do veículo, seja a escolhida no modal de seleção).
+const openForPrediction = (item, prediction) => {
   // sem person_id não dá pra montar o objeto que o RevisionsModal espera
   if (!item.person_id) return
 
   selectedPerson.value = { id: item.person_id, name: item.person_name }
   highlightVehicleId.value = item.vehicle_id ?? null
 
-  if (item.is_scheduled) {
-    highlightRevisionId.value = item.revision_id ?? null
+  if (prediction.is_scheduled) {
+    highlightRevisionId.value = prediction.revision_id ?? null
     prefillDate.value = null
     prefillKm.value = null
   } else {
     highlightRevisionId.value = null
-    prefillDate.value = item.predicted_date ? String(item.predicted_date).slice(0, 10) : null
-    prefillKm.value = item.predicted_km ?? null
+    prefillDate.value = prediction.predicted_date ? String(prediction.predicted_date).slice(0, 10) : null
+    prefillKm.value = prediction.predicted_km ?? null
   }
 
   isModalOpen.value = true
+}
+
+// 🔧 CORRIGIDO — antes, clicar em qualquer item abria direto o modal de
+// revisões usando a previsão mais próxima daquele veículo, mesmo quando
+// existiam OUTRAS revisões pendentes pro mesmo veículo — o usuário podia
+// cair numa revisão diferente da que pretendia iniciar, sem perceber que
+// havia mais de uma pendência. Agora: se o veículo tem só 1 previsão,
+// comportamento igual a antes; se tem mais de 1, abre primeiro o modal de
+// escolha (PendingRevisionsPickerModal) e só continua depois da seleção.
+const handleSelect = (item) => {
+  if ((item.predictions_count ?? 1) > 1) {
+    pickerItem.value = item
+    return
+  }
+
+  openForPrediction(item, item)
+}
+
+const handlePickPrediction = (pickedOption) => {
+  const item = pickerItem.value
+  pickerItem.value = null
+  if (!item) return
+  openForPrediction(item, pickedOption.payload)
+}
+
+const closePicker = () => {
+  pickerItem.value = null
 }
 
 // 🔧 CORRIGIDO — ao fechar o modal, refaz a busca da página atual
@@ -189,6 +235,15 @@ const closeModal = () => {
         </div>
       </div>
     </template>
+
+    <PendingRevisionsPickerModal
+      v-if="pickerItem"
+      :vehicle-label="pickerItem.vehicle"
+      :person-name="pickerItem.person_name"
+      :predictions="pickerPredictions"
+      @select="handlePickPrediction"
+      @close="closePicker"
+    />
 
     <RevisionsModal
       v-if="isModalOpen"

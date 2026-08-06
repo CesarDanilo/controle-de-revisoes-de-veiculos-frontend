@@ -3,6 +3,9 @@ import { computed, ref } from 'vue'
 import { useInfiniteQuery, useQueryClient } from '@tanstack/vue-query'
 import { Car, TrendingUp, ArrowUpRight, AlertTriangle, RefreshCw, Calendar } from '@lucide/vue'
 import { reportService } from '../../services/report.service'
+// 🟢 NOVO — modal de escolha, aberto quando o veículo clicado tem mais de
+// uma revisão pendente
+import PendingRevisionsPickerModal from './PendingRevisionsPickerModal.vue'
 
 const emit = defineEmits(['edit-vehicle'])
 
@@ -17,66 +20,58 @@ const parseLocalDate = (dateStr) => {
 
 const formatDate = (date) => date.toLocaleDateString('pt-BR')
 
-// 🔧 CORRIGIDO — antes o dedupe só removia duplicata quando VEÍCULO + DATA
-// batiam exatamente. Mas o mesmo veículo pode ter previsões futuras
-// diferentes (ex: uma "informada" pra 29/09 vinda de uma revisão antiga, e
-// uma "agendada" pra 30/09 vinda de uma revisão real já cadastrada) — nesse
-// caso a lista mostrava as DUAS, quando só faz sentido mostrar a PRÓXIMA
-// revisão de fato daquele veículo.
+// 🔧 CORRIGIDO — antes (dedupeByVehicleKeepNearest) o dedupe removia
+// SILENCIOSAMENTE qualquer previsão adicional do mesmo veículo, mantendo
+// só a mais próxima. Isso escondia do usuário revisões pendentes de fato
+// (ex: uma "informada" e uma "agendada" pro mesmo veículo em datas
+// próximas) — ele via só uma e podia acabar registrando/editando a
+// errada sem nem saber que havia outra.
 //
-// Regra nova: agrupa só por veículo (ignora a data no agrupamento) e
-// mantém a entrada com a data mais PRÓXIMA — seja ela informada, estimada
-// ou agendada. Em caso de empate exato de data, a agendada vence (é um
-// registro real, não um palpite).
-const dedupeByVehicleKeepNearest = (rawItems) => {
+// Regra nova: agrupa por veículo (ignora a data no agrupamento) mas NÃO
+// descarta nada — cada grupo carrega TODAS as previsões daquele veículo,
+// ordenadas da mais próxima pra mais distante. Em caso de empate exato de
+// data, a agendada vence (é um registro real, não um palpite).
+const groupByVehicle = (rawItems) => {
   const map = new Map()
 
   for (const item of rawItems) {
     const key = item.vehicle_id
-    const existing = map.get(key)
-
-    if (!existing) {
-      map.set(key, item)
-      continue
-    }
-
-    const existingDate = existing.predicted_date ? new Date(existing.predicted_date) : null
-    const itemDate = item.predicted_date ? new Date(item.predicted_date) : null
-
-    if (!itemDate) continue
-
-    if (!existingDate || itemDate < existingDate) {
-      map.set(key, item)
-      continue
-    }
-
-    if (itemDate.getTime() === existingDate.getTime() && item.is_scheduled && !existing.is_scheduled) {
-      map.set(key, item)
-    }
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(item)
   }
 
-  // reordena por data prevista, já que a remoção de itens pode ter
-  // desordenado a lista original vinda da API
-  return Array.from(map.values()).sort((a, b) => {
-    const dateA = a.predicted_date ? new Date(a.predicted_date) : null
-    const dateB = b.predicted_date ? new Date(b.predicted_date) : null
+  const groups = Array.from(map.values()).map((rowsForVehicle) =>
+    [...rowsForVehicle].sort((a, b) => {
+      const dateA = a.predicted_date ? new Date(a.predicted_date) : null
+      const dateB = b.predicted_date ? new Date(b.predicted_date) : null
+      if (!dateA) return 1
+      if (!dateB) return -1
+      if (dateA.getTime() === dateB.getTime()) {
+        if (a.is_scheduled && !b.is_scheduled) return -1
+        if (!a.is_scheduled && b.is_scheduled) return 1
+        return 0
+      }
+      return dateA - dateB
+    })
+  )
+
+  // reordena os grupos entre si pela previsão mais próxima de cada um
+  return groups.sort((a, b) => {
+    const dateA = a[0]?.predicted_date ? new Date(a[0].predicted_date) : null
+    const dateB = b[0]?.predicted_date ? new Date(b[0].predicted_date) : null
     if (!dateA) return 1
     if (!dateB) return -1
     return dateA - dateB
   })
 }
 
-// 🟡 MANTIDO — mapeia o formato que a API já manda. is_scheduled continua
-// vindo do backend, agora corretamente marcado para CADA revisão agendada
-// (não mais só a "mais distante" de cada veículo).
-//
-// 🟡 MANTIDO — predictedDateISO e predictedKm: usados só quando a previsão
-// NÃO é agendada (is_scheduled = false). Nesses casos o "revision_id" que
-// a API manda aponta pra revisão ANTIGA (a que originou a previsão via
-// next_revision_date ou pela média de intervalo) — não existe ainda uma
-// revisão de verdade pra essa data futura. Guardamos a data/KM previstos
-// em formato "cru" pra poder pré-preencher o formulário de CRIAÇÃO de uma
-// revisão nova, em vez de abrir a revisão antiga em modo edição.
+// 🟡 MANTIDO — mapeia o formato que a API já manda pra UMA previsão.
+// predictedDateISO e predictedKm: usados só quando a previsão NÃO é
+// agendada (isScheduled = false). Nesses casos o "revision_id" que a API
+// manda aponta pra revisão ANTIGA (a que originou a previsão) — não
+// existe ainda uma revisão de verdade pra essa data futura. Guardamos a
+// data/KM previstos em formato "cru" pra poder pré-preencher o
+// formulário de CRIAÇÃO de uma revisão nova.
 const mapPrediction = (item) => ({
   vehicleId: item.vehicle_id,
   personId: item.person_id,
@@ -91,9 +86,22 @@ const mapPrediction = (item) => ({
   isScheduled: item.is_scheduled,
 })
 
+// 🟢 NOVO — agrupa um veículo inteiro: mapeia CADA previsão bruta com
+// mapPrediction e monta um item cujo topo espelha a previsão mais
+// próxima (compatibilidade com o resto do template, que já lia os campos
+// direto), mas carregando também `predictions` (lista completa) e
+// `predictionsCount`, usados pra decidir se abre direto o formulário ou
+// primeiro o modal de escolha.
+const mapGroup = (rowsForVehicle) => {
+  const predictions = rowsForVehicle.map(mapPrediction)
+  return {
+    ...predictions[0],
+    predictions,
+    predictionsCount: predictions.length,
+  }
+}
+
 // 🟢 NOVO — checa se a resposta paginada do Laravel ainda tem próxima página.
-// Ajuste os nomes ('current_page'/'last_page') se seu paginate() customizado
-// devolver outro formato (ex: se usar um Resource/Transformer diferente).
 const getNextPageParam = (lastPage) => {
   const current = lastPage?.current_page ?? 1
   const last = lastPage?.last_page ?? 1
@@ -118,10 +126,10 @@ const {
   getNextPageParam,
 })
 
-// 🔧 CORRIGIDO — usa dedupeByVehicleKeepNearest, que mantém só a previsão
-// mais próxima por veículo (em vez de uma por veículo+data).
+// 🔧 CORRIGIDO — agrupa por veículo (groupByVehicle) sem descartar
+// previsões, e mapeia cada grupo com mapGroup.
 const upcomingPredictions = computed(() =>
-  dedupeByVehicleKeepNearest(flattenPages(upcomingPages.value?.pages)).map(mapPrediction)
+  groupByVehicle(flattenPages(upcomingPages.value?.pages)).map(mapGroup)
 )
 
 // ---------------------------------------------------------------------
@@ -140,9 +148,9 @@ const {
   getNextPageParam,
 })
 
-// 🔧 CORRIGIDO — mesma deduplicação aplicada na lista de atrasadas.
+// 🔧 CORRIGIDO — mesmo agrupamento aplicado na lista de atrasadas.
 const overduePredictions = computed(() =>
-  dedupeByVehicleKeepNearest(flattenPages(overduePages.value?.pages)).map(mapPrediction)
+  groupByVehicle(flattenPages(overduePages.value?.pages)).map(mapGroup)
 )
 
 const isLoading = computed(() => isLoadingUpcoming.value && isLoadingOverdue.value)
@@ -152,8 +160,7 @@ const hasAnyPrediction = computed(
 
 // ---------------------------------------------------------------------
 // SCROLL INFINITO — detecta quando o usuário chega perto do fim de CADA
-// lista e dispara fetchNextPage() daquela lista específica. threshold em
-// px: dispara um pouco antes de bater no fundo, pra sensação ficar suave.
+// lista e dispara fetchNextPage() daquela lista específica.
 // ---------------------------------------------------------------------
 const SCROLL_THRESHOLD = 48
 
@@ -173,13 +180,32 @@ const handleOverdueScroll = (event) => {
   }
 }
 
-// 🟡 MANTIDO — is_scheduled = true -> revisão futura REAL já cadastrada.
-// Abre em modo edição. is_scheduled = false -> só uma previsão (informada
-// ou estimada). Abre o formulário de CRIAÇÃO de uma revisão nova, no
-// veículo certo, com a data (e KM, se houver) prevista já preenchidos.
-// Com a deduplicação por veículo, agora só chega aqui UMA entrada por
-// veículo em cada lista, então essa distinção volta a ser confiável.
-const handleSelect = (prediction) => {
+// ---------------------------------------------------------------------
+// 🟢 NOVO — MODAL DE ESCOLHA, quando o veículo tem >1 previsão pendente
+// ---------------------------------------------------------------------
+const pickerGroup = ref(null)
+
+const pickerPredictions = computed(() => {
+  if (!pickerGroup.value) return []
+  return pickerGroup.value.predictions.map((prediction, index) => ({
+    key: `${prediction.vehicleId}-${prediction.lastRevisionId ?? index}`,
+    dateLabel: formatDate(prediction.predictedDate),
+    kmLabel: prediction.predictedKm
+      ? `${Number(prediction.predictedKm).toLocaleString('pt-BR')} km`
+      : null,
+    originLabel: prediction.isScheduled
+      ? 'Agendada'
+      : prediction.isEstimated
+        ? `Estimada (a cada ~${prediction.avgDays} dias)`
+        : 'Data informada',
+    payload: prediction,
+  }))
+})
+
+// Emite o evento pro pai (PainelView) abrir o RevisionsModal — mesma
+// lógica de antes, só que agora chamada tanto pro caso de 1 previsão só
+// quanto pra previsão escolhida no modal de seleção.
+const emitSelection = (prediction) => {
   if (prediction.isScheduled) {
     emit('edit-vehicle', {
       vehicleId: prediction.vehicleId,
@@ -198,6 +224,29 @@ const handleSelect = (prediction) => {
     prefillDate: prediction.predictedDateISO,
     prefillKm: prediction.predictedKm,
   })
+}
+
+// 🔧 CORRIGIDO — antes, clicar em QUALQUER previsão emitia direto o
+// evento usando a previsão mais próxima daquele veículo, mesmo quando
+// havia outras pendências. Agora: se o veículo tem só 1 previsão,
+// comportamento igual a antes; se tem mais de 1, abre primeiro o modal
+// de escolha e só emite o evento depois da seleção do usuário.
+const handleSelect = (prediction) => {
+  if (prediction.predictionsCount > 1) {
+    pickerGroup.value = prediction
+    return
+  }
+
+  emitSelection(prediction)
+}
+
+const handlePickPrediction = (item) => {
+  pickerGroup.value = null
+  emitSelection(item.payload)
+}
+
+const closePicker = () => {
+  pickerGroup.value = null
 }
 </script>
 
@@ -242,7 +291,7 @@ const handleSelect = (prediction) => {
           <ul v-if="upcomingPredictions.length" class="flex flex-col divide-y divide-ink-100">
             <li
               v-for="prediction in upcomingPredictions"
-              :key="`${prediction.vehicleId}-${prediction.lastRevisionId}`"
+              :key="prediction.vehicleId"
               role="button"
               tabindex="0"
               class="flex cursor-pointer items-center justify-between gap-3 rounded-lg py-3 px-2 -mx-2 transition-colors first:pt-0 hover:bg-ink-50 focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -273,6 +322,15 @@ const handleSelect = (prediction) => {
                   <template v-else-if="prediction.isEstimated">a cada ~{{ prediction.avgDays }} dias</template>
                   <template v-else>data informada</template>
                 </p>
+                <!-- 🟢 NOVO — badge explícito quando o veículo tem mais de
+                     uma revisão pendente, pra não passar a ideia de que
+                     essa é a única -->
+                <span
+                  v-if="prediction.predictionsCount > 1"
+                  class="mt-1 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
+                >
+                  {{ prediction.predictionsCount }} previstas
+                </span>
               </div>
             </li>
           </ul>
@@ -304,7 +362,7 @@ const handleSelect = (prediction) => {
           <ul v-if="overduePredictions.length" class="flex flex-col divide-y divide-ink-100">
             <li
               v-for="prediction in overduePredictions"
-              :key="`${prediction.vehicleId}-${prediction.lastRevisionId}`"
+              :key="prediction.vehicleId"
               role="button"
               tabindex="0"
               class="flex cursor-pointer items-center justify-between gap-3 rounded-lg py-3 px-2 -mx-2 transition-colors first:pt-0 hover:bg-ink-50 focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -331,6 +389,13 @@ const handleSelect = (prediction) => {
                   <template v-else-if="prediction.isEstimated">a cada ~{{ prediction.avgDays }} dias</template>
                   <template v-else>data informada</template>
                 </p>
+                <!-- 🟢 NOVO -->
+                <span
+                  v-if="prediction.predictionsCount > 1"
+                  class="mt-1 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
+                >
+                  {{ prediction.predictionsCount }} previstas
+                </span>
               </div>
             </li>
           </ul>
@@ -342,5 +407,14 @@ const handleSelect = (prediction) => {
         </div>
       </div>
     </template>
+
+    <PendingRevisionsPickerModal
+      v-if="pickerGroup"
+      :vehicle-label="pickerGroup.vehicleLabel"
+      :person-name="pickerGroup.personName"
+      :predictions="pickerPredictions"
+      @select="handlePickPrediction"
+      @close="closePicker"
+    />
   </div>
 </template>

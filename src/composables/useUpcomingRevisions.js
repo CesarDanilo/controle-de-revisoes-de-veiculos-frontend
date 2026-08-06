@@ -15,7 +15,7 @@ function classifyStatus(predictedDate) {
   const diffDays = Math.round((target - today) / ONE_DAY)
 
   if (diffDays < 0) return 'overdue'
-  if (diffDays === 0) return 'today' // 🔧 CORRIGIDO — antes caía direto em 'soon'
+  if (diffDays === 0) return 'today'
   if (diffDays <= 7) return 'soon'
   return 'normal'
 }
@@ -23,7 +23,6 @@ function classifyStatus(predictedDate) {
 function formatDateLabel(predictedDate) {
   if (!predictedDate) return '—'
 
-  // 🔴 AQUI — adicionado "year: 'numeric'", antes só mostrava dia e mês
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
     month: 'short',
@@ -31,74 +30,83 @@ function formatDateLabel(predictedDate) {
   }).format(new Date(predictedDate))
 }
 
-// 🔧 CORRIGIDO — antes o dedupe só removia duplicata quando VEÍCULO + DATA
-// batiam exatamente. Mas o mesmo veículo pode ter previsões futuras
-// diferentes (ex: uma "informada" pra uma data vinda de uma revisão antiga,
-// e uma "agendada" pra outra data vinda de uma revisão real já cadastrada)
-// — nesse caso a lista mostrava as DUAS, quando só faz sentido mostrar a
-// PRÓXIMA revisão de fato daquele veículo.
-//
-// Regra nova: agrupa só por veículo (ignora a data no agrupamento) e
-// mantém a entrada com a data mais PRÓXIMA — seja ela informada, estimada
-// ou agendada. Em caso de empate exato de data, a agendada vence (é um
-// registro real, não um palpite).
-function dedupeByVehicleKeepNearest(rows) {
+// 🔧 CORRIGIDO — antes (dedupeByVehicleKeepNearest) reduzia todas as
+// previsões de um mesmo veículo a UMA SÓ (a mais próxima), descartando as
+// demais silenciosamente. Isso escondia do usuário o fato de existir mais
+// de uma revisão pendente pro mesmo veículo no mesmo período. Agora
+// agrupa por veículo SEM descartar nada — cada grupo carrega todas as
+// previsões daquele veículo, ordenadas da mais próxima pra mais distante
+// (empate de data: agendada vence, por ser um registro real, não um
+// palpite).
+function groupByVehicle(rows) {
   const map = new Map()
 
   for (const row of rows) {
     const key = row.vehicle_id
-    const existing = map.get(key)
-
-    if (!existing) {
-      map.set(key, row)
-      continue
-    }
-
-    const existingDate = existing.predicted_date ? new Date(existing.predicted_date) : null
-    const rowDate = row.predicted_date ? new Date(row.predicted_date) : null
-
-    if (!rowDate) continue
-
-    if (!existingDate || rowDate < existingDate) {
-      map.set(key, row)
-      continue
-    }
-
-    if (rowDate.getTime() === existingDate.getTime() && row.is_scheduled && !existing.is_scheduled) {
-      map.set(key, row)
-    }
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push(row)
   }
 
-  // reordena por data prevista, já que a remoção de itens pode ter
-  // desordenado a lista original vinda da API
-  return Array.from(map.values()).sort((a, b) => {
-    const dateA = a.predicted_date ? new Date(a.predicted_date) : null
-    const dateB = b.predicted_date ? new Date(b.predicted_date) : null
+  const groups = Array.from(map.values()).map((rowsForVehicle) =>
+    [...rowsForVehicle].sort((a, b) => {
+      const dateA = a.predicted_date ? new Date(a.predicted_date) : null
+      const dateB = b.predicted_date ? new Date(b.predicted_date) : null
+      if (!dateA) return 1
+      if (!dateB) return -1
+      if (dateA.getTime() === dateB.getTime()) {
+        if (a.is_scheduled && !b.is_scheduled) return -1
+        if (!a.is_scheduled && b.is_scheduled) return 1
+        return 0
+      }
+      return dateA - dateB
+    })
+  )
+
+  // ordena os grupos entre si pela previsão mais próxima de cada um
+  return groups.sort((a, b) => {
+    const dateA = a[0]?.predicted_date ? new Date(a[0].predicted_date) : null
+    const dateB = b[0]?.predicted_date ? new Date(b[0].predicted_date) : null
     if (!dateA) return 1
     if (!dateB) return -1
     return dateA - dateB
   })
 }
 
-function mapItem(row) {
-  return {
-    // 🔴 AQUI — ids necessários para permitir clique -> abrir RevisionsModal
-    // já destacando a revisão certa. Vêm do ReportController::upcomingRevisions.
-    person_id: row.person_id,
-    vehicle_id: row.vehicle_id,
+// 🔧 CORRIGIDO — mapItem virou mapGroup: recebe TODAS as previsões de um
+// veículo (já ordenadas por groupByVehicle) e monta um item cujo topo
+// reflete a previsão mais próxima (mantendo compatibilidade com quem lia
+// person_id/vehicle_id/predicted_date direto no item), mas agora também
+// carrega `predictions` (a lista completa) e `predictions_count`, usados
+// pelo UpcomingRevisionsPanel pra decidir se abre direto a revisão ou
+// primeiro um modal de escolha.
+function mapGroup(rowsForVehicle) {
+  const nearest = rowsForVehicle[0]
+
+  const predictions = rowsForVehicle.map((row) => ({
     revision_id: row.revision_id,
-    person_name: row.person_name,
-    vehicle: row.vehicle,
-    predicted_date_label: formatDateLabel(row.predicted_date),
-    status: classifyStatus(row.predicted_date),
-    origin_label: row.is_estimated_date ? 'Estimado' : 'Informado',
-    // 🟡 MANTIDO — necessários pra decidir, ao clicar, entre abrir a revisão
-    // futura REAL em modo edição (quando is_scheduled = true) ou abrir o
-    // formulário de criação pré-preenchido (quando é só uma previsão).
-    // Ver UpcomingRevisionsPanel.vue::handleSelect.
     predicted_date: row.predicted_date,
     predicted_km: row.predicted_km,
+    is_estimated_date: row.is_estimated_date,
     is_scheduled: row.is_scheduled,
+    predicted_date_label: formatDateLabel(row.predicted_date),
+    origin_label: row.is_estimated_date ? 'Estimado' : 'Informado',
+  }))
+
+  return {
+    person_id: nearest.person_id,
+    vehicle_id: nearest.vehicle_id,
+    revision_id: nearest.revision_id,
+    person_name: nearest.person_name,
+    vehicle: nearest.vehicle,
+    predicted_date_label: formatDateLabel(nearest.predicted_date),
+    status: classifyStatus(nearest.predicted_date),
+    origin_label: nearest.is_estimated_date ? 'Estimado' : 'Informado',
+    predicted_date: nearest.predicted_date,
+    predicted_km: nearest.predicted_km,
+    is_scheduled: nearest.is_scheduled,
+    // 🟢 NOVO
+    predictions,
+    predictions_count: predictions.length,
   }
 }
 
@@ -124,10 +132,8 @@ export function useUpcomingRevisions() {
         params: { page: targetPage, per_page: perPage.value },
       })
 
-      // 🔧 CORRIGIDO — usa dedupeByVehicleKeepNearest, que mantém só a
-      // previsão mais próxima por veículo (em vez de uma por veículo+data),
-      // na página atual.
-      items.value = dedupeByVehicleKeepNearest(data.data).map(mapItem)
+      // 🔧 CORRIGIDO — agrupa por veículo sem descartar previsões
+      items.value = groupByVehicle(data.data).map(mapGroup)
       page.value = data.current_page
       lastPage.value = data.last_page
       total.value = data.total

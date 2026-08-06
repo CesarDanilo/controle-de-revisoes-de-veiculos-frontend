@@ -2,21 +2,17 @@
 import { AlertTriangle, Calendar, Clock, Car, ChevronRight } from '@lucide/vue'
 
 defineProps({
-  // [{ person_id, vehicle_id, revision_id, person_name, vehicle, predicted_date_label, status, origin_label }]
+  // [{ person_id, vehicle_id, revision_id, person_name, vehicle, predicted_date_label, status, origin_label, predictions_count }]
   // status: 'overdue' | 'today' | 'soon' | 'normal'
+  // predictions_count: quantas revisões pendentes esse veículo tem no total
   items: { type: Array, required: true },
 })
 
-// 🔴 AQUI — clique/Enter/Espaço no item abre o modal de revisões da pessoa,
-// já destacando a revisão específica (ver UpcomingRevisionsPanel.vue)
+// 🔴 AQUI — clique/Enter/Espaço no item: se predictions_count > 1, o
+// UpcomingRevisionsPanel abre primeiro um modal de escolha; se for só 1,
+// vai direto pro modal de revisões da pessoa (ver UpcomingRevisionsPanel.vue)
 const emit = defineEmits(['select'])
 
-// 🔧 CORRIGIDO — badges seguem a mesma paleta usada em outros indicadores
-// de status do app (ex: banner de erro em ReportsView.vue usa
-// red-50/text-red-700; KPI "warning" usa amber). Adicionado o status
-// 'today', que antes não tinha entrada aqui e por isso caía sem badge
-// nenhum (o classifyStatus já retornava 'soon' pra hoje, mascarando o
-// problema — agora "hoje" tem status e estilo próprios).
 const STATUS_STYLE = {
   overdue: { badge: 'bg-red-50 text-red-700', icon: AlertTriangle, label: 'Atrasada' },
   today: { badge: 'bg-brand-50 text-brand-700', icon: Calendar, label: 'Hoje' },
@@ -72,12 +68,17 @@ const STATUS_STYLE = {
           >
             {{ item.origin_label }}
           </span>
+          <!-- 🟢 NOVO — badge deixando explícito que existe mais de uma
+               revisão pendente pra esse veículo, evitando que o usuário
+               interprete a data mostrada como a única pendência. -->
+          <span
+            v-if="item.predictions_count > 1"
+            class="mt-1 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
+          >
+            {{ item.predictions_count }} previstas
+          </span>
         </div>
 
-        <!-- 🟢 NOVO — affordance de navegação: chevron sutil que aparece e
-             desliza no hover/focus, sinalizando "clique leva a outro
-             lugar" (o RevisionsModal), em vez do item parecer só uma
-             linha estática. -->
         <ChevronRight
           :size="16"
           class="shrink-0 text-ink-300 opacity-0 transition-all duration-150 group-hover:translate-x-0.5 group-hover:opacity-100 group-focus-visible:opacity-100"
