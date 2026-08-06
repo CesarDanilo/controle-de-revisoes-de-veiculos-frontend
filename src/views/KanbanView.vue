@@ -1,9 +1,8 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
 import { useQuery, useQueryClient } from '@tanstack/vue-query'
-import { Calendar, Clock, FileText, GripVertical, IdCard, Pencil, RefreshCw, Search, X } from '@lucide/vue'
+import { Calendar, Clock, FileText, GripVertical, IdCard, Pencil, RefreshCw, Search, X, CheckCircle2 } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
-// mesmo modal já usado em Pessoas e Relatórios
 import RevisionsModal from '../components/people/RevisionsModal.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
 import { revisionService } from '../services/revision.service'
@@ -15,10 +14,6 @@ const queryClient = useQueryClient()
 const formatCurrency = (value) =>
   Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 
-// Aproximação — mostra "desde quando esse registro foi tocado pela
-// última vez" usando updated_at, porque ainda não temos a tabela de
-// histórico (revision_status_logs) pra saber exatamente quando ele ENTROU
-// na etapa atual. Se/quando essa tabela existir, troque a fonte aqui.
 const tempoDesdeAtualizacao = (isoDate) => {
   if (!isoDate) return ''
   const dias = Math.floor((new Date() - new Date(isoDate)) / (1000 * 60 * 60 * 24))
@@ -27,9 +22,6 @@ const tempoDesdeAtualizacao = (isoDate) => {
   return `atualizado há ${dias} dias`
 }
 
-// Removido o "limite" por coluna. Agora cada coluna tem altura fixa e
-// rolagem vertical própria (ver o container dos cards no template), então
-// não há mais motivo pra travar a quantidade de cards.
 const COLUNAS = [
   { status: 'aberto', titulo: 'Aberto', cor: 'bg-ink-300' },
   { status: 'em_andamento', titulo: 'Em andamento', cor: 'bg-amber-400' },
@@ -44,7 +36,7 @@ const PAGAMENTO_BADGE = {
 }
 
 // ---------------------------------------------------------------------------
-// Busca real via API (GET /revisions)
+// Busca real via API
 // ---------------------------------------------------------------------------
 const {
   data: revisoes,
@@ -60,12 +52,6 @@ watch(error, (err) => {
   if (err) toast.error(err.response?.data?.message ?? 'Não foi possível carregar as revisões.')
 })
 
-// ---------------------------------------------------------------------------
-// 🟢 NOVO — botão "Atualizar" manual, mesmo padrão usado na tela de
-// Proprietários. Reexecuta a query do board (refetch do TanStack Query),
-// sem dar reload na página inteira. Resolve o mesmo problema de mover um
-// card em outra aba/módulo e não refletir aqui sozinho até reload.
-// ---------------------------------------------------------------------------
 const isRefreshing = ref(false)
 
 const refreshRevisoes = async () => {
@@ -82,12 +68,11 @@ const refreshRevisoes = async () => {
 }
 
 // ---------------------------------------------------------------------------
-// Filtros — todos seguem o mesmo padrão de input/limite/contador "fantasma"
-// usado originalmente só no filtro de nome do proprietário.
+// Filtros
 // ---------------------------------------------------------------------------
 const NAME_FILTER_MAX_LENGTH = 40
 const DESCRICAO_FILTER_MAX_LENGTH = 60
-const PLACA_FILTER_MAX_LENGTH = 8 // cobre ABC-1234 (antiga) e ABC1D23 (Mercosul)
+const PLACA_FILTER_MAX_LENGTH = 8
 
 const filtroNome = ref('')
 const filtroDescricao = ref('')
@@ -111,11 +96,9 @@ const sanitizePlacaFilter = () => {
   if (filtroPlaca.value.length > PLACA_FILTER_MAX_LENGTH) {
     filtroPlaca.value = filtroPlaca.value.slice(0, PLACA_FILTER_MAX_LENGTH)
   }
-  // placas são sempre maiúsculas — normaliza direto no que o usuário digita
   filtroPlaca.value = filtroPlaca.value.toUpperCase()
 }
 
-// normaliza removendo acentos, pra "joao" encontrar "João"
 const normalizar = (texto) =>
   (texto || '')
     .toString()
@@ -124,8 +107,6 @@ const normalizar = (texto) =>
     .toLowerCase()
     .trim()
 
-// normaliza placa removendo tudo que não é letra/número, pra "abc1234"
-// encontrar tanto "ABC-1234" quanto "ABC1234"
 const normalizarPlaca = (placa) =>
   (placa || '')
     .toString()
@@ -140,8 +121,6 @@ const revisoesFiltradas = computed(() => {
   const termoPlaca = normalizarPlaca(filtroPlaca.value)
 
   const dataDe = filtroDataDe.value ? new Date(`${filtroDataDe.value}T00:00:00`) : null
-  // "Até" precisa cobrir o dia inteiro, senão registros do próprio dia
-  // ficariam de fora por causa da hora zerada
   const dataAte = filtroDataAte.value ? new Date(`${filtroDataAte.value}T23:59:59`) : null
 
   return lista.filter((r) => {
@@ -159,55 +138,29 @@ const revisoesFiltradas = computed(() => {
   })
 })
 
-const limparFiltroNome = () => {
-  filtroNome.value = ''
-}
-const limparFiltroDescricao = () => {
-  filtroDescricao.value = ''
-}
-const limparFiltroPlaca = () => {
-  filtroPlaca.value = ''
-}
+const limparFiltroNome = () => { filtroNome.value = '' }
+const limparFiltroDescricao = () => { filtroDescricao.value = '' }
+const limparFiltroPlaca = () => { filtroPlaca.value = '' }
 const limparFiltroData = () => {
   filtroDataDe.value = ''
   filtroDataAte.value = ''
 }
 
-// chips de filtros ativos, exibidos abaixo dos inputs — cada um com seu
-// próprio botão de remover
 const filtrosAtivos = computed(() => {
   const chips = []
-
-  if (filtroNome.value) {
-    chips.push({ key: 'nome', label: 'Nome', valor: filtroNome.value, limpar: limparFiltroNome })
-  }
-  if (filtroDescricao.value) {
-    chips.push({
-      key: 'descricao',
-      label: 'Descrição',
-      valor: filtroDescricao.value,
-      limpar: limparFiltroDescricao,
-    })
-  }
-  if (filtroPlaca.value) {
-    chips.push({ key: 'placa', label: 'Placa', valor: filtroPlaca.value, limpar: limparFiltroPlaca })
-  }
+  if (filtroNome.value) chips.push({ key: 'nome', label: 'Nome', valor: filtroNome.value, limpar: limparFiltroNome })
+  if (filtroDescricao.value) chips.push({ key: 'descricao', label: 'Descrição', valor: filtroDescricao.value, limpar: limparFiltroDescricao })
+  if (filtroPlaca.value) chips.push({ key: 'placa', label: 'Placa', valor: filtroPlaca.value, limpar: limparFiltroPlaca })
   if (filtroDataDe.value || filtroDataAte.value) {
     const de = filtroDataDe.value ? new Date(`${filtroDataDe.value}T00:00:00`).toLocaleDateString('pt-BR') : '...'
-    const ate = filtroDataAte.value
-      ? new Date(`${filtroDataAte.value}T00:00:00`).toLocaleDateString('pt-BR')
-      : '...'
+    const ate = filtroDataAte.value ? new Date(`${filtroDataAte.value}T00:00:00`).toLocaleDateString('pt-BR') : '...'
     chips.push({ key: 'data', label: 'Período', valor: `${de} – ${ate}`, limpar: limparFiltroData })
   }
-
   return chips
 })
 
 const algumFiltroAtivo = computed(() => filtrosAtivos.value.length > 0)
 
-// Um array reativo por coluna — reconstruído sempre que a query trouxer
-// dados novos, ou quando algum filtro mudar (ou depois de um rollback
-// de drag-and-drop).
 const colunasData = reactive(Object.fromEntries(COLUNAS.map(({ status }) => [status, []])))
 
 watch(
@@ -224,27 +177,38 @@ watch(
 const valorTotalColuna = (status) =>
   formatCurrency(colunasData[status].reduce((soma, r) => soma + Number(r.cost || 0), 0))
 
-// Total de cards visíveis com os filtros aplicados (pra feedback no chip)
 const totalFiltrado = computed(() =>
   COLUNAS.reduce((soma, { status }) => soma + colunasData[status].length, 0),
 )
 
 // ---------------------------------------------------------------------------
-// Drag-and-drop nativo (HTML5) + persistência real via PATCH
+// Drag-and-drop otimizado sem travamentos
 // ---------------------------------------------------------------------------
-const cardArrastado = ref(null) // { card, statusOrigem }
-const colunaEmHover = ref(null) // status da coluna sob o cursor (feedback visual)
+const cardArrastado = ref(null)
+const colunaEmHover = ref(null)
+const lastMovedCardId = ref(null)
+let highlightTimeout = null
 
 const onDragStart = (card, statusOrigem) => {
   cardArrastado.value = { card, statusOrigem }
 }
 
+const onDragEnd = () => {
+  cardArrastado.value = null
+  colunaEmHover.value = null
+}
+
+// Otimização: evita re-renders excessivos durante o arrasto continuo do mouse
 const onDragOverColuna = (status) => {
-  colunaEmHover.value = status
+  if (colunaEmHover.value !== status) {
+    colunaEmHover.value = status
+  }
 }
 
 const onDragLeaveColuna = (status) => {
-  if (colunaEmHover.value === status) colunaEmHover.value = null
+  if (colunaEmHover.value === status) {
+    colunaEmHover.value = null
+  }
 }
 
 const onDrop = async (statusDestino) => {
@@ -255,27 +219,33 @@ const onDrop = async (statusDestino) => {
   cardArrastado.value = null
   if (statusOrigem === statusDestino) return
 
-  // update otimista: move o card na hora, sem esperar a API responder
+  // 1. Remove da coluna de origem
   colunasData[statusOrigem] = colunasData[statusOrigem].filter((c) => c.id !== card.id)
   card.status = statusDestino
-  colunasData[statusDestino].push(card)
+
+  // 2. Coloca SEMPRE no topo da coluna de destino, não importa onde foi solto
+  colunasData[statusDestino].unshift(card)
+
+  // 3. Destaque temporário de 3s
+  lastMovedCardId.value = card.id
+  if (highlightTimeout) clearTimeout(highlightTimeout)
+  highlightTimeout = setTimeout(() => {
+    lastMovedCardId.value = null
+  }, 3000)
 
   try {
     await revisionService.updateStatus(card.id, statusDestino)
   } catch (err) {
-    // desfaz o movimento se a API recusar (rede caiu, 422, 500 etc.)
     toast.error('Não foi possível mover a revisão. Tente novamente.')
     colunasData[statusDestino] = colunasData[statusDestino].filter((c) => c.id !== card.id)
     card.status = statusOrigem
     colunasData[statusOrigem].push(card)
+    lastMovedCardId.value = null
   }
 }
 
 // ---------------------------------------------------------------------------
-// Modal de revisões, aberto pelo ícone de edição do card. Mesmo padrão
-// usado em Relatórios (handleRevisionsByPeriodRowClick): abre o
-// RevisionsModal já filtrado na pessoa dona do veículo, com o veículo e a
-// revisão certos destacados/em edição.
+// Modal
 // ---------------------------------------------------------------------------
 const isRevisionsModalOpen = ref(false)
 const selectedPerson = ref(null)
@@ -283,7 +253,6 @@ const highlightVehicleId = ref(null)
 const highlightRevisionId = ref(null)
 
 const openRevisionsModal = (card) => {
-  // sem person_id não dá pra abrir o modal (ex: veículo sem dono cadastrado)
   if (!card.person_id) {
     toast.error('Essa revisão não tem um proprietário vinculado.')
     return
@@ -299,8 +268,6 @@ const closeRevisionsModal = () => {
   selectedPerson.value = null
   highlightVehicleId.value = null
   highlightRevisionId.value = null
-  // recarrega o board pra refletir qualquer edição feita dentro do modal
-  // (ex: status/status_pagamento mudados manualmente, não via drag-and-drop)
   queryClient.invalidateQueries({ queryKey: ['revisions-kanban'] })
 }
 </script>
@@ -308,7 +275,6 @@ const closeRevisionsModal = () => {
 <template>
   <AppShell title="Kanban de Revisões" subtitle="Acompanhe o andamento de cada revisão por etapa.">
     <template #actions>
-      <!-- 🟢 NOVO — botão de atualizar manual, sem reload de página -->
       <BaseButton
         variant="secondary"
         :disabled="isRefreshing"
@@ -320,11 +286,8 @@ const closeRevisionsModal = () => {
       </BaseButton>
     </template>
 
-    <!-- Filtros — nome, descrição, placa e período, todos no mesmo padrão
-         de cartão/inputs/contador/chip -->
     <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">
       <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <!-- Nome do proprietário -->
         <div class="relative">
           <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
           <input
@@ -343,7 +306,6 @@ const closeRevisionsModal = () => {
           </span>
         </div>
 
-        <!-- Descrição da revisão -->
         <div class="relative">
           <FileText :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
           <input
@@ -362,7 +324,6 @@ const closeRevisionsModal = () => {
           </span>
         </div>
 
-        <!-- Placa do veículo -->
         <div class="relative">
           <IdCard :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
           <input
@@ -381,7 +342,6 @@ const closeRevisionsModal = () => {
           </span>
         </div>
 
-        <!-- Período (data da revisão) -->
         <div class="flex items-center gap-2">
           <div class="relative flex-1">
             <Calendar :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
@@ -405,8 +365,6 @@ const closeRevisionsModal = () => {
         </div>
       </div>
 
-      <!-- chips dos filtros ativos, no mesmo padrão da tela de
-           Proprietários -->
       <div v-if="algumFiltroAtivo" class="mt-3 flex flex-wrap items-center gap-2">
         <span class="text-xs text-ink-500">{{ totalFiltrado }} encontrada(s):</span>
 
@@ -431,17 +389,20 @@ const closeRevisionsModal = () => {
 
     <p v-if="isLoading" class="text-sm text-ink-400">Carregando revisões...</p>
 
-    <!-- items-start pra cada coluna ter sua própria altura fixa (h-full só
-         funcionaria se o pai tivesse altura definida; com items-start +
-         max-h nos filhos, cada coluna cresce até o teto e depois rola por
-         conta própria, sem depender da altura das vizinhas) -->
-    <section v-else class="flex items-start gap-4 overflow-x-auto pb-2">
+    <section v-else class="flex items-start gap-4 overflow-x-auto pb-2 select-none">
       <div
         v-for="coluna in COLUNAS"
         :key="coluna.status"
-        class="flex w-[280px] flex-shrink-0 flex-col rounded-2xl border border-ink-100/70 bg-ink-50/60 shadow-sm shadow-ink-900/[0.03]"
+        class="flex w-[280px] flex-shrink-0 flex-col rounded-2xl border transition-colors duration-150"
+        :class="[
+          colunaEmHover === coluna.status
+            ? 'border-2 border-dashed border-brand-400 bg-brand-50/80 ring-2 ring-brand-400/20'
+            : 'border-ink-100/70 bg-ink-50/60 shadow-sm shadow-ink-900/[0.03]'
+        ]"
+        @dragover.prevent="onDragOverColuna(coluna.status)"
+        @dragleave="onDragLeaveColuna(coluna.status)"
+        @drop.prevent="onDrop(coluna.status)"
       >
-        <!-- Cabeçalho da coluna -->
         <div class="flex items-center justify-between rounded-t-2xl border-b border-ink-100 bg-white px-4 py-3">
           <div class="flex items-center gap-2">
             <span class="h-2.5 w-2.5 rounded-full" :class="coluna.cor" />
@@ -453,31 +414,44 @@ const closeRevisionsModal = () => {
           <span class="text-xs text-ink-400">{{ valorTotalColuna(coluna.status) }}</span>
         </div>
 
-        <!-- Lista de cards (área de drop) — rola verticalmente, sem limite
-             de quantidade. max-h define o "teto" de cada coluna; ajuste o
-             valor se quiser colunas mais altas/baixas. -->
-        <div
-          class="flex max-h-[65vh] min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto rounded-b-2xl p-3 transition-colors"
-          :class="colunaEmHover === coluna.status ? 'bg-brand-50/60' : ''"
-          @dragover.prevent="onDragOverColuna(coluna.status)"
-          @dragleave="onDragLeaveColuna(coluna.status)"
-          @drop.prevent="onDrop(coluna.status)"
-        >
+        <div class="flex max-h-[65vh] min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto rounded-b-2xl p-3">
+          <div
+            v-if="colunaEmHover === coluna.status && cardArrastado?.statusOrigem !== coluna.status"
+            class="rounded-xl border-2 border-dashed border-brand-400 bg-brand-100/60 p-2 text-center text-xs font-semibold text-brand-700 pointer-events-none"
+          >
+            Soltar aqui (vai para o topo)
+          </div>
+
           <div
             v-for="card in colunasData[coluna.status]"
             :key="card.id"
             draggable="true"
-            class="group cursor-grab rounded-xl border border-ink-100/70 bg-white p-3 shadow-sm shadow-ink-900/[0.03] transition-colors hover:border-brand-200 active:cursor-grabbing"
+            class="group cursor-grab rounded-xl border p-3 shadow-sm transition-all duration-200 active:cursor-grabbing will-change-transform"
+            :class="[
+              cardArrastado?.card?.id === card.id
+                ? 'opacity-30 scale-95 border-brand-300'
+                : '',
+              lastMovedCardId === card.id
+                ? 'border-brand-500 bg-brand-50/90 ring-2 ring-brand-400/50 shadow-md scale-[1.01]'
+                : 'border-ink-100/70 bg-white hover:border-brand-200 shadow-ink-900/[0.03]'
+            ]"
             @dragstart="onDragStart(card, coluna.status)"
+            @dragend="onDragEnd"
           >
+            <div
+              v-if="lastMovedCardId === card.id"
+              class="mb-2 flex items-center gap-1 text-[11px] font-semibold text-brand-700 bg-brand-100/80 px-2 py-0.5 rounded-md w-max"
+            >
+              <CheckCircle2 :size="12" class="text-brand-600" />
+              Movido agora (no topo)
+            </div>
+
             <div class="mb-2 flex items-start justify-between gap-2">
               <div class="flex items-center gap-1.5 text-sm font-medium text-ink-900">
                 <FileText :size="14" class="shrink-0 text-ink-300" />
                 {{ card.description }}
               </div>
               <div class="flex shrink-0 items-center gap-0.5">
-                <!-- abre o RevisionsModal já em modo edição desta revisão.
-                     @click.stop pra não conflitar com o drag do card. -->
                 <button
                   type="button"
                   title="Editar revisão"
@@ -490,8 +464,6 @@ const closeRevisionsModal = () => {
               </div>
             </div>
 
-            <!-- person_name/vehicle_model/vehicle_license_plate vindos do
-                 backend (eager load vehicle.people) -->
             <div class="mb-2 text-xs text-ink-500">
               <span v-if="card.person_name">{{ card.person_name }} · </span>
               <span v-if="card.vehicle_model || card.vehicle_license_plate">
@@ -507,9 +479,9 @@ const closeRevisionsModal = () => {
               <span class="text-sm font-semibold text-ink-900">{{ formatCurrency(card.cost) }}</span>
               <span
                 class="rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset"
-                :class="PAGAMENTO_BADGE[card.status_pagamento].classes"
+                :class="PAGAMENTO_BADGE[card.status_pagamento]?.classes"
               >
-                {{ PAGAMENTO_BADGE[card.status_pagamento].label }}
+                {{ PAGAMENTO_BADGE[card.status_pagamento]?.label }}
               </span>
             </div>
 
@@ -519,9 +491,8 @@ const closeRevisionsModal = () => {
             </div>
           </div>
 
-          <!-- Estado vazio da coluna -->
           <p
-            v-if="colunasData[coluna.status].length === 0"
+            v-if="colunasData[coluna.status].length === 0 && colunaEmHover !== coluna.status"
             class="rounded-xl border border-dashed border-ink-100 p-4 text-center text-xs text-ink-400"
           >
             {{ algumFiltroAtivo ? 'Nenhum resultado para esses filtros' : 'Arraste um card para cá' }}
