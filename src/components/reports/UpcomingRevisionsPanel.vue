@@ -81,22 +81,50 @@ const isModalOpen = ref(false)
 const selectedPerson = ref(null)
 const highlightVehicleId = ref(null)
 const highlightRevisionId = ref(null)
+// usados quando o item clicado NÃO é uma revisão agendada de
+// verdade (é só uma previsão informada/estimada).
+const prefillDate = ref(null)
+const prefillKm = ref(null)
 
+// clicar em qualquer item, mesmo os de data informada/estimada (que ainda
+// não são um registro de verdade), só entra em modo edição quando o item
+// é realmente uma revisão futura agendada (is_scheduled); nos demais
+// casos, abre o formulário de CRIAÇÃO já com a data (e KM) prevista
+// preenchidos.
 const handleSelect = (item) => {
   // sem person_id não dá pra montar o objeto que o RevisionsModal espera
   if (!item.person_id) return
 
   selectedPerson.value = { id: item.person_id, name: item.person_name }
   highlightVehicleId.value = item.vehicle_id ?? null
-  highlightRevisionId.value = item.revision_id ?? null
+
+  if (item.is_scheduled) {
+    highlightRevisionId.value = item.revision_id ?? null
+    prefillDate.value = null
+    prefillKm.value = null
+  } else {
+    highlightRevisionId.value = null
+    prefillDate.value = item.predicted_date ? String(item.predicted_date).slice(0, 10) : null
+    prefillKm.value = item.predicted_km ?? null
+  }
+
   isModalOpen.value = true
 }
 
+// 🔧 CORRIGIDO — ao fechar o modal, refaz a busca da página atual
+// (fetchPage). Essa lista NÃO usa Vue Query (é o composable manual
+// useUpcomingRevisions), então qualquer revisão criada/editada dentro do
+// modal (ex: uma nova "próxima revisão" informada) não aparecia aqui até
+// o usuário sair e voltar da tela de Relatórios. Agora atualiza sozinho
+// assim que o modal fecha, refletindo a nova data/KM na hora.
 const closeModal = () => {
   isModalOpen.value = false
   selectedPerson.value = null
   highlightVehicleId.value = null
   highlightRevisionId.value = null
+  prefillDate.value = null
+  prefillKm.value = null
+  fetchPage(page.value)
 }
 </script>
 
@@ -167,6 +195,8 @@ const closeModal = () => {
       :person="selectedPerson"
       :highlight-vehicle-id="highlightVehicleId"
       :highlight-revision-id="highlightRevisionId"
+      :prefill-date="prefillDate"
+      :prefill-km="prefillKm"
       @close="closeModal"
       @register-vehicle="closeModal"
     />

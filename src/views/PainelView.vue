@@ -126,22 +126,35 @@ const stats = computed(() => [
 ])
 
 // Estado do modal de revisões (RevisionsModal exige "person" + aceita
-// highlightVehicleId/highlightRevisionId opcionais)
+// highlightVehicleId/highlightRevisionId/prefillDate/prefillKm opcionais)
 const showRevisionsModal = ref(false)
 const selectedPerson = ref(null)
 const highlightVehicleId = ref(null)
 const highlightRevisionId = ref(null)
+// 🟢 NOVO — usados quando a previsão clicada NÃO é uma revisão agendada de
+// verdade (é só uma data informada/estimada). Ver comentário detalhado em
+// openRevisionsModal() logo abaixo.
+const prefillDate = ref(null)
+const prefillKm = ref(null)
 
 // Estado do modal de cadastro de veículo — aberto a partir do modal de
 // revisões quando a pessoa ainda não tem nenhum veículo
 const showVehicleFormModal = ref(false)
 
-// 🟡 ALTERADO — antes recebia o objeto "vehicle" inteiro (vindo da lista
-// completa que buscávamos aqui). Agora o UpcomingRevisionsCard já busca
-// seus próprios dados e emite só os IDs necessários (vehicleId, personId,
-// revisionId). A pessoa é localizada na lista de "people" (que já
-// carregamos de qualquer forma, via usePeople, pra outras partes do app).
-const openRevisionsModal = ({ vehicleId, personId, revisionId = null }) => {
+// 🔧 CORRIGIDO — bug: clicar em QUALQUER previsão de "próxima revisão"
+// (mesmo as de data informada/estimada, que ainda não são um registro de
+// verdade) abria o modal já em modo EDIÇÃO da revisão ANTIGA que originou
+// a previsão — confundindo o usuário, que via uma data futura na lista e
+// caía editando um registro do passado ao clicar.
+//
+// Agora o evento emitido pelo UpcomingRevisionsCard já vem diferenciado:
+// - revisionId preenchido -> é uma revisão futura REAL (agendada). Abre em
+//   modo edição, como antes.
+// - prefillDate preenchido (revisionId nulo) -> é só uma previsão. Abre o
+//   RevisionsModal no modo de CRIAÇÃO, no veículo certo, já com a data (e
+//   KM, se houver) prevista preenchidos — pra o usuário registrar a
+//   revisão nova quando ela realmente acontecer.
+const openRevisionsModal = ({ vehicleId, personId, revisionId = null, prefillDate: date = null, prefillKm: km = null }) => {
   const personList = unref(people) ?? []
   const person = personList.find((p) => p.id === personId)
 
@@ -153,6 +166,8 @@ const openRevisionsModal = ({ vehicleId, personId, revisionId = null }) => {
   selectedPerson.value = person
   highlightVehicleId.value = vehicleId
   highlightRevisionId.value = revisionId
+  prefillDate.value = date
+  prefillKm.value = km
   showRevisionsModal.value = true
 }
 
@@ -161,6 +176,8 @@ const closeRevisionsModal = () => {
   selectedPerson.value = null
   highlightVehicleId.value = null
   highlightRevisionId.value = null
+  prefillDate.value = null
+  prefillKm.value = null
 }
 
 // Disparado pelo próprio RevisionsModal (@register-vehicle) quando a
@@ -243,6 +260,8 @@ const closeVehicleFormModal = () => {
       :person="selectedPerson"
       :highlight-vehicle-id="highlightVehicleId"
       :highlight-revision-id="highlightRevisionId"
+      :prefill-date="prefillDate"
+      :prefill-km="prefillKm"
       @close="closeRevisionsModal"
       @register-vehicle="openVehicleFormFromRevisions"
     />

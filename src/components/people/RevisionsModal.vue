@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useQueryClient } from '@tanstack/vue-query'
 import { Car, Wrench, Plus, X, Loader2, AlertCircle, Pencil, Trash2 } from '@lucide/vue'
 import BaseModal from '../ui/BaseModal.vue'
 import ConfirmModal from '../ui/ConfirmModal.vue'
@@ -11,11 +12,34 @@ const props = defineProps({
   person: { type: Object, required: true },
   highlightVehicleId: { type: [String, Number], default: null },
   highlightRevisionId: { type: [String, Number], default: null },
+  // usados quando a "próxima revisão" clicada ainda não é um
+  // registro de verdade (é uma previsão informada/estimada, calculada com
+  // base na revisão anterior). Em vez de abrir a revisão ANTIGA em modo
+  // edição, abrimos o formulário de CRIAÇÃO já no veículo certo, com a
+  // data (e KM, se houver) da previsão pré-preenchidos.
+  prefillDate: { type: String, default: null },
+  prefillKm: { type: [String, Number], default: null },
 })
 
 const emit = defineEmits(['close', 'register-vehicle'])
 
 const toast = useToast()
+
+// 🟢 NOVO — cliente do Vue Query, usado pra invalidar o cache das
+// "próximas revisões" sempre que uma revisão for criada/editada/excluída
+// aqui dentro. Sem isso, o card do Painel (que usa useInfiniteQuery)
+// continuava mostrando dados desatualizados até o usuário sair e voltar
+// da tela — o que forçava um remount e, por coincidência, um fetch novo.
+const queryClient = useQueryClient()
+
+// 🟢 NOVO — centraliza a invalidação. 'upcoming-revisions' é o prefixo de
+// queryKey usado tanto pela lista "Próximas" quanto "Atrasadas" do
+// UpcomingRevisionsCard.vue (Painel): ['upcoming-revisions', 'upcoming']
+// e ['upcoming-revisions', 'overdue']. Passar só o prefixo invalida as
+// duas de uma vez.
+const invalidateUpcomingRevisions = () => {
+  queryClient.invalidateQueries({ queryKey: ['upcoming-revisions'] })
+}
 
 const vehicles = ref([])
 const revisionsByVehicle = reactive({})
@@ -422,11 +446,38 @@ const openHighlightedForEdit = () => {
   })
 }
 
+// usado quando a pessoa clica numa previsão de "próxima revisão"
+// que ainda não é uma revisão de verdade (data informada/estimada com base
+// no histórico do veículo). Abre o formulário de CRIAÇÃO no veículo certo,
+// já com a data prevista preenchida (e o KM previsto, se houver) — assim o
+// usuário registra a revisão nova quando ela realmente acontecer, em vez
+// de cair sem querer na edição da revisão ANTIGA que originou a previsão.
+const openPrefillCreateForm = () => {
+  if (!props.highlightVehicleId || !props.prefillDate) return
+
+  const vehicle = vehicles.value.find((v) => String(v.id) === String(props.highlightVehicleId))
+  if (!vehicle) return
+
+  toggleForm(vehicle.id)
+  formData.revision_date = props.prefillDate
+  if (props.prefillKm !== null && props.prefillKm !== undefined && props.prefillKm !== '') {
+    formData.km = Number(props.prefillKm)
+  }
+
+  nextTick(() => {
+    setTimeout(() => {
+      formRefs.value[vehicle.id]?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 150)
+  })
+}
+
+
 // 🔴 AQUI — mesma lógica usada no cadastro de veículos: se não há nenhuma
 // revisão cadastrada (em nenhum veículo da pessoa), abre o formulário de
 // criação direto no primeiro veículo, pra já pedir o preenchimento
 const openCreateFormIfEmpty = () => {
   if (props.highlightRevisionId) return
+  if (props.prefillDate) return
   if (!vehicles.value.length) return
   if (totalRevisionsCount.value > 0) return
 
@@ -618,6 +669,11 @@ const submitRevision = async (vehicle) => {
       }
       revisionsByVehicle[vehicle.id] = sortRevisions(currentList)
       toast.success('Revisão atualizada com sucesso!')
+      // 🔧 CORRIGIDO — invalida o cache de "próximas revisões" sempre que
+      // uma edição é salva (a data/KM da próxima revisão pode ter mudado).
+      // Sem isso o card do Painel continuava mostrando a previsão antiga
+      // até o usuário sair e voltar da tela.
+      invalidateUpcomingRevisions()
       closeForm()
     } catch (err) {
       console.error('Erro ao salvar revisão:', err.response?.data ?? err)
@@ -655,6 +711,13 @@ const submitRevision = async (vehicle) => {
     const currentList = revisionsByVehicle[vehicle.id] || []
     revisionsByVehicle[vehicle.id] = sortRevisions([created, ...currentList])
     toast.success('Revisão cadastrada com sucesso!')
+    // 🔧 CORRIGIDO — invalida o cache de "próximas revisões" ao criar uma
+    // revisão nova. É exatamente o caso do fluxo "clico na previsão
+    // informada -> preencho -> salvo": antes disso, a nova data futura
+    // (next_revision_date) só aparecia no painel depois de sair e voltar
+    // da tela (ou criar outra revisão manualmente, que às vezes disparava
+    // um remount por acaso).
+    invalidateUpcomingRevisions()
     closeForm()
   } catch (err) {
     console.error('Erro ao salvar revisão:', err.response?.data ?? err)
@@ -690,6 +753,10 @@ const confirmDelete = async () => {
       closeForm()
     }
     toast.success('Revisão removida com sucesso!')
+    // 🔧 CORRIGIDO — excluir uma revisão também pode fazer uma previsão
+    // "informada" reaparecer (se ela era baseada em outra revisão) ou uma
+    // "agendada" sumir — então invalidamos aqui também.
+    invalidateUpcomingRevisions()
     revisionToDelete.value = null
 
     // 🔴 AQUI — se essa era a última revisão da pessoa (em todos os veículos),
@@ -714,6 +781,7 @@ const goToVehicleRegistration = () => {
 onMounted(async () => {
   await loadAll()
   openHighlightedForEdit()
+  openPrefillCreateForm()
   openCreateFormIfEmpty()
 })
 </script>

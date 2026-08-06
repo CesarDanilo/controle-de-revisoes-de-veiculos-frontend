@@ -17,9 +17,66 @@ const parseLocalDate = (dateStr) => {
 
 const formatDate = (date) => date.toLocaleDateString('pt-BR')
 
+// 🔧 CORRIGIDO — antes o dedupe só removia duplicata quando VEÍCULO + DATA
+// batiam exatamente. Mas o mesmo veículo pode ter previsões futuras
+// diferentes (ex: uma "informada" pra 29/09 vinda de uma revisão antiga, e
+// uma "agendada" pra 30/09 vinda de uma revisão real já cadastrada) — nesse
+// caso a lista mostrava as DUAS, quando só faz sentido mostrar a PRÓXIMA
+// revisão de fato daquele veículo.
+//
+// Regra nova: agrupa só por veículo (ignora a data no agrupamento) e
+// mantém a entrada com a data mais PRÓXIMA — seja ela informada, estimada
+// ou agendada. Em caso de empate exato de data, a agendada vence (é um
+// registro real, não um palpite).
+const dedupeByVehicleKeepNearest = (rawItems) => {
+  const map = new Map()
+
+  for (const item of rawItems) {
+    const key = item.vehicle_id
+    const existing = map.get(key)
+
+    if (!existing) {
+      map.set(key, item)
+      continue
+    }
+
+    const existingDate = existing.predicted_date ? new Date(existing.predicted_date) : null
+    const itemDate = item.predicted_date ? new Date(item.predicted_date) : null
+
+    if (!itemDate) continue
+
+    if (!existingDate || itemDate < existingDate) {
+      map.set(key, item)
+      continue
+    }
+
+    if (itemDate.getTime() === existingDate.getTime() && item.is_scheduled && !existing.is_scheduled) {
+      map.set(key, item)
+    }
+  }
+
+  // reordena por data prevista, já que a remoção de itens pode ter
+  // desordenado a lista original vinda da API
+  return Array.from(map.values()).sort((a, b) => {
+    const dateA = a.predicted_date ? new Date(a.predicted_date) : null
+    const dateB = b.predicted_date ? new Date(b.predicted_date) : null
+    if (!dateA) return 1
+    if (!dateB) return -1
+    return dateA - dateB
+  })
+}
+
 // 🟡 MANTIDO — mapeia o formato que a API já manda. is_scheduled continua
 // vindo do backend, agora corretamente marcado para CADA revisão agendada
 // (não mais só a "mais distante" de cada veículo).
+//
+// 🟡 MANTIDO — predictedDateISO e predictedKm: usados só quando a previsão
+// NÃO é agendada (is_scheduled = false). Nesses casos o "revision_id" que
+// a API manda aponta pra revisão ANTIGA (a que originou a previsão via
+// next_revision_date ou pela média de intervalo) — não existe ainda uma
+// revisão de verdade pra essa data futura. Guardamos a data/KM previstos
+// em formato "cru" pra poder pré-preencher o formulário de CRIAÇÃO de uma
+// revisão nova, em vez de abrir a revisão antiga em modo edição.
 const mapPrediction = (item) => ({
   vehicleId: item.vehicle_id,
   personId: item.person_id,
@@ -28,6 +85,8 @@ const mapPrediction = (item) => ({
   personName: item.person_name || '—',
   avgDays: item.avg_interval_days,
   predictedDate: parseLocalDate(item.predicted_date),
+  predictedDateISO: item.predicted_date ? String(item.predicted_date).slice(0, 10) : null,
+  predictedKm: item.predicted_km ?? null,
   isEstimated: item.is_estimated_date,
   isScheduled: item.is_scheduled,
 })
@@ -59,8 +118,10 @@ const {
   getNextPageParam,
 })
 
+// 🔧 CORRIGIDO — usa dedupeByVehicleKeepNearest, que mantém só a previsão
+// mais próxima por veículo (em vez de uma por veículo+data).
 const upcomingPredictions = computed(() =>
-  flattenPages(upcomingPages.value?.pages).map(mapPrediction)
+  dedupeByVehicleKeepNearest(flattenPages(upcomingPages.value?.pages)).map(mapPrediction)
 )
 
 // ---------------------------------------------------------------------
@@ -79,8 +140,9 @@ const {
   getNextPageParam,
 })
 
+// 🔧 CORRIGIDO — mesma deduplicação aplicada na lista de atrasadas.
 const overduePredictions = computed(() =>
-  flattenPages(overduePages.value?.pages).map(mapPrediction)
+  dedupeByVehicleKeepNearest(flattenPages(overduePages.value?.pages)).map(mapPrediction)
 )
 
 const isLoading = computed(() => isLoadingUpcoming.value && isLoadingOverdue.value)
@@ -111,11 +173,30 @@ const handleOverdueScroll = (event) => {
   }
 }
 
+// 🟡 MANTIDO — is_scheduled = true -> revisão futura REAL já cadastrada.
+// Abre em modo edição. is_scheduled = false -> só uma previsão (informada
+// ou estimada). Abre o formulário de CRIAÇÃO de uma revisão nova, no
+// veículo certo, com a data (e KM, se houver) prevista já preenchidos.
+// Com a deduplicação por veículo, agora só chega aqui UMA entrada por
+// veículo em cada lista, então essa distinção volta a ser confiável.
 const handleSelect = (prediction) => {
+  if (prediction.isScheduled) {
+    emit('edit-vehicle', {
+      vehicleId: prediction.vehicleId,
+      personId: prediction.personId,
+      revisionId: prediction.lastRevisionId,
+      prefillDate: null,
+      prefillKm: null,
+    })
+    return
+  }
+
   emit('edit-vehicle', {
     vehicleId: prediction.vehicleId,
     personId: prediction.personId,
-    revisionId: prediction.lastRevisionId,
+    revisionId: null,
+    prefillDate: prediction.predictedDateISO,
+    prefillKm: prediction.predictedKm,
   })
 }
 </script>
