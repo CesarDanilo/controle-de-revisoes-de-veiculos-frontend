@@ -410,51 +410,53 @@ const closeRevisionsModal = () => {
       </div>
 
       <div
-        v-if="filtroPeriodoOpcao === 'custom'"
-        class="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-ink-100/60 pt-3"
+        v-if="algumFiltroAtivo || filtroPeriodoOpcao === 'custom'"
+        class="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-ink-100/60 pt-3"
       >
-        <span class="text-xs font-medium text-ink-400">De:</span>
-        <div class="relative w-36">
-          <Calendar :size="12" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-300" />
-          <input
-            v-model="filtroDataDe"
-            type="date"
-            aria-label="Data inicial"
-            class="w-full rounded-lg border border-ink-100 py-1 pl-7 pr-1 text-sm text-ink-700 focus:border-brand-400 focus:outline-none"
-          />
-        </div>
+        <div v-if="algumFiltroAtivo" class="flex flex-wrap items-center gap-2">
+          <span class="text-xs font-medium text-ink-500">{{ totalFiltrado }} encontrada(s):</span>
 
-        <span class="text-xs font-medium text-ink-400">Até:</span>
-        <div class="relative w-36">
-          <Calendar :size="12" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-300" />
-          <input
-            v-model="filtroDataAte"
-            type="date"
-            aria-label="Data final"
-            class="w-full rounded-lg border border-ink-100 py-1 pl-7 pr-1 text-sm text-ink-700 focus:border-brand-400 focus:outline-none bg-white cursor-pointer"
-          />
-        </div>
-      </div>
-
-      <div v-if="algumFiltroAtivo" class="mt-3 flex flex-wrap items-center gap-2">
-        <span class="text-xs text-ink-500">{{ totalFiltrado }} encontrada(s):</span>
-
-        <span
-          v-for="chip in filtrosAtivos"
-          :key="chip.key"
-          class="inline-flex items-center gap-1.5 rounded-full bg-brand-50 py-1 pl-3 pr-1.5 text-xs font-medium text-brand-700"
-        >
-          <span class="text-brand-500">{{ chip.label }}:</span>
-          {{ chip.valor }}
-          <button
-            type="button"
-            class="flex h-4 w-4 items-center justify-center rounded-full text-brand-500 transition-colors hover:bg-brand-200 hover:text-brand-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
-            :aria-label="`Remover filtro de ${chip.label.toLowerCase()}`"
-            @click="chip.limpar"
+          <span
+            v-for="chip in filtrosAtivos"
+            :key="chip.key"
+            class="inline-flex items-center gap-1.5 rounded-full bg-brand-50 py-1 pl-3 pr-1.5 text-xs font-medium text-brand-700"
           >
-            <X :size="11" />
-          </button>
-        </span>
+            <span class="text-brand-500">{{ chip.label }}:</span>
+            {{ chip.valor }}
+            <button
+              type="button"
+              class="flex h-4 w-4 items-center justify-center rounded-full text-brand-500 transition-colors hover:bg-brand-200 hover:text-brand-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+              :aria-label="`Remover filtro de ${chip.label.toLowerCase()}`"
+              @click="chip.limpar"
+            >
+              <X :size="11" />
+            </button>
+          </span>
+        </div>
+
+        <div v-if="filtroPeriodoOpcao === 'custom'" class="flex items-center gap-2 ml-auto">
+          <span class="text-xs font-medium text-ink-400">De:</span>
+          <div class="relative w-36">
+            <Calendar :size="12" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-300" />
+            <input
+              v-model="filtroDataDe"
+              type="date"
+              aria-label="Data inicial"
+              class="w-full rounded-lg border border-ink-100 py-1 pl-7 pr-1 text-xs text-ink-700 focus:border-brand-400 focus:outline-none"
+            />
+          </div>
+
+          <span class="text-xs font-medium text-ink-400">Até:</span>
+          <div class="relative w-36">
+            <Calendar :size="12" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-300" />
+            <input
+              v-model="filtroDataAte"
+              type="date"
+              aria-label="Data final"
+              class="w-full rounded-lg border border-ink-100 py-1 pl-7 pr-1 text-xs text-ink-700 focus:border-brand-400 focus:outline-none"
+            />
+          </div>
+        </div>
       </div>
     </div>
 
