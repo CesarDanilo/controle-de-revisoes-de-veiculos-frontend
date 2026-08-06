@@ -198,7 +198,6 @@ const onDragEnd = () => {
   colunaEmHover.value = null
 }
 
-// Otimização: evita re-renders excessivos durante o arrasto continuo do mouse
 const onDragOverColuna = (status) => {
   if (colunaEmHover.value !== status) {
     colunaEmHover.value = status
@@ -414,10 +413,10 @@ const closeRevisionsModal = () => {
           <span class="text-xs text-ink-400">{{ valorTotalColuna(coluna.status) }}</span>
         </div>
 
-        <div class="flex max-h-[65vh] min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto rounded-b-2xl p-3">
+        <div class="flex max-h-[65vh] min-h-[140px] flex-1 flex-col gap-2 overflow-y-auto rounded-b-2xl p-3">
           <div
             v-if="colunaEmHover === coluna.status && cardArrastado?.statusOrigem !== coluna.status"
-            class="rounded-xl border-2 border-dashed border-brand-400 bg-brand-100/60 p-2 text-center text-xs font-semibold text-brand-700 pointer-events-none"
+            class="flex min-h-[148px] w-full items-center justify-center rounded-xl border-2 border-dashed border-brand-400 bg-brand-100/60 p-4 text-center text-xs font-semibold text-brand-700 pointer-events-none transition-all duration-150"
           >
             Soltar aqui (vai para o topo)
           </div>
@@ -493,7 +492,7 @@ const closeRevisionsModal = () => {
 
           <p
             v-if="colunasData[coluna.status].length === 0 && colunaEmHover !== coluna.status"
-            class="rounded-xl border border-dashed border-ink-100 p-4 text-center text-xs text-ink-400"
+            class="flex min-h-[148px] items-center justify-center rounded-xl border border-dashed border-ink-100 p-4 text-center text-xs text-ink-400"
           >
             {{ algumFiltroAtivo ? 'Nenhum resultado para esses filtros' : 'Arraste um card para cá' }}
           </p>
