@@ -77,8 +77,44 @@ const PLACA_FILTER_MAX_LENGTH = 8
 const filtroNome = ref('')
 const filtroDescricao = ref('')
 const filtroPlaca = ref('')
+const filtroPeriodoOpcao = ref('todos') // 'todos' | 'hoje' | '7dias' | '30dias' | 'este_mes' | 'este_ano' | 'custom'
 const filtroDataDe = ref('')
 const filtroDataAte = ref('')
+
+// Formata data Date para YYYY-MM-DD
+const formatDateToInput = (date) => date.toISOString().split('T')[0]
+
+// Atualiza filtroDataDe/filtroDataAte quando a opção do Select muda
+watch(filtroPeriodoOpcao, (novaOpcao) => {
+  const hoje = new Date()
+
+  if (novaOpcao === 'hoje') {
+    const dataStr = formatDateToInput(hoje)
+    filtroDataDe.value = dataStr
+    filtroDataAte.value = dataStr
+  } else if (novaOpcao === '7dias') {
+    const seteDiasAtras = new Date()
+    seteDiasAtras.setDate(hoje.getDate() - 7)
+    filtroDataDe.value = formatDateToInput(seteDiasAtras)
+    filtroDataAte.value = formatDateToInput(hoje)
+  } else if (novaOpcao === '30dias') {
+    const trintaDiasAtras = new Date()
+    trintaDiasAtras.setDate(hoje.getDate() - 30)
+    filtroDataDe.value = formatDateToInput(trintaDiasAtras)
+    filtroDataAte.value = formatDateToInput(hoje)
+  } else if (novaOpcao === 'este_mes') {
+    const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1)
+    filtroDataDe.value = formatDateToInput(primeiroDia)
+    filtroDataAte.value = formatDateToInput(hoje)
+  } else if (novaOpcao === 'este_ano') {
+    const primeiroDiaAno = new Date(hoje.getFullYear(), 0, 1)
+    filtroDataDe.value = formatDateToInput(primeiroDiaAno)
+    filtroDataAte.value = formatDateToInput(hoje)
+  } else if (novaOpcao === 'todos') {
+    filtroDataDe.value = ''
+    filtroDataAte.value = ''
+  }
+})
 
 const sanitizeNameFilter = () => {
   if (filtroNome.value.length > NAME_FILTER_MAX_LENGTH) {
@@ -142,19 +178,34 @@ const limparFiltroNome = () => { filtroNome.value = '' }
 const limparFiltroDescricao = () => { filtroDescricao.value = '' }
 const limparFiltroPlaca = () => { filtroPlaca.value = '' }
 const limparFiltroData = () => {
+  filtroPeriodoOpcao.value = 'todos'
   filtroDataDe.value = ''
   filtroDataAte.value = ''
 }
+
+const labelPeriodoSelecionado = computed(() => {
+  const mapaLabels = {
+    hoje: 'Hoje',
+    '7dias': 'Últimos 7 dias',
+    '30dias': 'Últimos 30 dias',
+    este_mes: 'Este mês',
+    este_ano: 'Este ano',
+  }
+  if (mapaLabels[filtroPeriodoOpcao.value]) {
+    return mapaLabels[filtroPeriodoOpcao.value]
+  }
+  const de = filtroDataDe.value ? new Date(`${filtroDataDe.value}T00:00:00`).toLocaleDateString('pt-BR') : '...'
+  const ate = filtroDataAte.value ? new Date(`${filtroDataAte.value}T00:00:00`).toLocaleDateString('pt-BR') : '...'
+  return `${de} – ${ate}`
+})
 
 const filtrosAtivos = computed(() => {
   const chips = []
   if (filtroNome.value) chips.push({ key: 'nome', label: 'Nome', valor: filtroNome.value, limpar: limparFiltroNome })
   if (filtroDescricao.value) chips.push({ key: 'descricao', label: 'Descrição', valor: filtroDescricao.value, limpar: limparFiltroDescricao })
   if (filtroPlaca.value) chips.push({ key: 'placa', label: 'Placa', valor: filtroPlaca.value, limpar: limparFiltroPlaca })
-  if (filtroDataDe.value || filtroDataAte.value) {
-    const de = filtroDataDe.value ? new Date(`${filtroDataDe.value}T00:00:00`).toLocaleDateString('pt-BR') : '...'
-    const ate = filtroDataAte.value ? new Date(`${filtroDataAte.value}T00:00:00`).toLocaleDateString('pt-BR') : '...'
-    chips.push({ key: 'data', label: 'Período', valor: `${de} – ${ate}`, limpar: limparFiltroData })
+  if (filtroPeriodoOpcao.value !== 'todos' || filtroDataDe.value || filtroDataAte.value) {
+    chips.push({ key: 'data', label: 'Período', valor: labelPeriodoSelecionado.value, limpar: limparFiltroData })
   }
   return chips
 })
@@ -286,7 +337,7 @@ const closeRevisionsModal = () => {
     </template>
 
     <div class="mb-4 rounded-2xl border border-ink-100/70 bg-white p-4 shadow-sm shadow-ink-900/[0.03]">
-      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div class="relative">
           <Search :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
           <input
@@ -341,26 +392,47 @@ const closeRevisionsModal = () => {
           </span>
         </div>
 
-        <div class="flex items-center gap-2">
-          <div class="relative flex-1">
-            <Calendar :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              v-model="filtroDataDe"
-              type="date"
-              aria-label="Data inicial"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-2 text-sm text-ink-700 focus:border-brand-400 focus:outline-none"
-            />
-          </div>
-          <span class="text-xs text-ink-300">até</span>
-          <div class="relative flex-1">
-            <Calendar :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
-            <input
-              v-model="filtroDataAte"
-              type="date"
-              aria-label="Data final"
-              class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-2 text-sm text-ink-700 focus:border-brand-400 focus:outline-none"
-            />
-          </div>
+        <div class="relative">
+          <Calendar :size="14" class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-300" />
+          <select
+            v-model="filtroPeriodoOpcao"
+            class="w-full rounded-xl border border-ink-100 py-2 pl-9 pr-8 text-sm text-ink-700 focus:border-brand-400 focus:outline-none bg-white cursor-pointer"
+          >
+            <option value="todos">Todo o período</option>
+            <option value="hoje">Hoje</option>
+            <option value="7dias">Últimos 7 dias</option>
+            <option value="30dias">Últimos 30 dias</option>
+            <option value="este_mes">Este mês</option>
+            <option value="este_ano">Este ano</option>
+            <option value="custom">Personalizado...</option>
+          </select>
+        </div>
+      </div>
+
+      <div
+        v-if="filtroPeriodoOpcao === 'custom'"
+        class="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-ink-100/60 pt-3"
+      >
+        <span class="text-xs font-medium text-ink-400">De:</span>
+        <div class="relative w-36">
+          <Calendar :size="12" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-300" />
+          <input
+            v-model="filtroDataDe"
+            type="date"
+            aria-label="Data inicial"
+            class="w-full rounded-lg border border-ink-100 py-1 pl-7 pr-1 text-sm text-ink-700 focus:border-brand-400 focus:outline-none"
+          />
+        </div>
+
+        <span class="text-xs font-medium text-ink-400">Até:</span>
+        <div class="relative w-36">
+          <Calendar :size="12" class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-300" />
+          <input
+            v-model="filtroDataAte"
+            type="date"
+            aria-label="Data final"
+            class="w-full rounded-lg border border-ink-100 py-1 pl-7 pr-1 text-sm text-ink-700 focus:border-brand-400 focus:outline-none bg-white cursor-pointer"
+          />
         </div>
       </div>
 
