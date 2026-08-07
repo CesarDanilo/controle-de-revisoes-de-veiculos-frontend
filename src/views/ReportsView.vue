@@ -330,10 +330,23 @@ const activeDetailTab = ref('revisions')
 // ---------------------------------------------------------------------
 // SCROLL AUTOMÁTICO PARA SEÇÃO VIA ÂNCORA
 // ---------------------------------------------------------------------
+// 🔧 CORRIGIDO — antes TODO hash de aba (#aba-revisoes/#aba-veiculos/
+// #aba-pessoas) apontava sempre pro mesmo destino fixo
+// ('secao-detalhes-tabs', o topo da barra de abas). Isso fazia o card
+// "Revisões" do Dashboard, que usa '#aba-revisoes', cair sempre no topo
+// da aba — ou seja, no painel "Tempo médio entre revisões" (primeiro
+// da aba), nunca no painel "Revisões no período selecionado" (mais
+// abaixo), que é o que faz sentido pra esse card.
+//
+// Agora cada hash carrega também o ID do elemento-alvo específico:
+// - '#aba-revisoes' ativa a aba "revisions" e rola direto até o painel
+//   "Revisões no período selecionado" (id="painel-revisoes-periodo").
+// - '#aba-veiculos' / '#aba-pessoas' continuam rolando até o topo da
+//   barra de abas, igual antes (não têm um painel "principal" óbvio).
 const TAB_HASH_MAP = {
-  '#aba-revisoes': 'revisions',
-  '#aba-veiculos': 'vehicles',
-  '#aba-pessoas': 'people',
+  '#aba-revisoes': { tab: 'revisions', targetId: 'painel-revisoes-periodo' },
+  '#aba-veiculos': { tab: 'vehicles', targetId: 'secao-detalhes-tabs' },
+  '#aba-pessoas': { tab: 'people', targetId: 'secao-detalhes-tabs' },
 }
 
 const isWindowContainer = (container) =>
@@ -436,11 +449,11 @@ const scrollToTarget = async (targetId) => {
 const scrollToHashSection = async () => {
   if (!route.hash) return
 
-  const tabKey = TAB_HASH_MAP[route.hash]
-  if (tabKey) activeDetailTab.value = tabKey
+  const mapping = TAB_HASH_MAP[route.hash]
+  if (mapping) activeDetailTab.value = mapping.tab
 
   await nextTick()
-  const targetId = tabKey ? 'secao-detalhes-tabs' : route.hash.slice(1)
+  const targetId = mapping ? mapping.targetId : route.hash.slice(1)
   await scrollToTarget(targetId)
 }
 
@@ -876,7 +889,7 @@ onMounted(loadAll)
               />
             </ReportPanel>
 
-            <ReportPanel title="Revisões no período selecionado">
+            <ReportPanel id="painel-revisoes-periodo" title="Revisões no período selecionado" class="scroll-mt-6">
               <div class="mb-3 flex justify-end">
                 <button
                   type="button"
