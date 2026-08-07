@@ -79,6 +79,8 @@ function groupByVehicle(rows) {
 // carrega `predictions` (a lista completa) e `predictions_count`, usados
 // pelo UpcomingRevisionsPanel pra decidir se abre direto a revisão ou
 // primeiro um modal de escolha.
+// 🔧 CORRIGIDO — description agora vem do backend (revisions.description)
+// e é repassada tanto no topo do item quanto em cada previsão individual.
 function mapGroup(rowsForVehicle) {
   const nearest = rowsForVehicle[0]
 
@@ -90,6 +92,7 @@ function mapGroup(rowsForVehicle) {
     is_scheduled: row.is_scheduled,
     predicted_date_label: formatDateLabel(row.predicted_date),
     origin_label: row.is_estimated_date ? 'Estimado' : 'Informado',
+    description: row.description ?? null,
   }))
 
   return {
@@ -104,7 +107,7 @@ function mapGroup(rowsForVehicle) {
     predicted_date: nearest.predicted_date,
     predicted_km: nearest.predicted_km,
     is_scheduled: nearest.is_scheduled,
-    // 🟢 NOVO
+    description: nearest.description ?? null,
     predictions,
     predictions_count: predictions.length,
   }

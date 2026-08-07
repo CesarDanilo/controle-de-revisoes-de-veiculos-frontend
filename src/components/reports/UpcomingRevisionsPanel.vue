@@ -104,6 +104,8 @@ const pickerPredictions = computed(() => {
       ? `${Number(prediction.predicted_km).toLocaleString('pt-BR')} km`
       : null,
     originLabel: prediction.is_scheduled ? 'Agendada' : prediction.origin_label,
+    // 🟢 NOVO — repassa a descrição (já vem de useUpcomingRevisions.js)
+    description: prediction.description,
     payload: prediction,
   }))
 })

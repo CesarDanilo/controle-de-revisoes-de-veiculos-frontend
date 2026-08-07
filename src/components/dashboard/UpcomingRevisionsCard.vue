@@ -84,6 +84,8 @@ const mapPrediction = (item) => ({
   predictedKm: item.predicted_km ?? null,
   isEstimated: item.is_estimated_date,
   isScheduled: item.is_scheduled,
+  // 🟢 NOVO — description agora vem da API (revisions.description)
+  description: item.description ?? null,
 })
 
 // 🟢 NOVO — agrupa um veículo inteiro: mapeia CADA previsão bruta com
@@ -198,6 +200,8 @@ const pickerPredictions = computed(() => {
       : prediction.isEstimated
         ? `Estimada (a cada ~${prediction.avgDays} dias)`
         : 'Data informada',
+    // 🟢 NOVO — repassa a descrição pro PendingRevisionsPickerModal
+    description: prediction.description,
     payload: prediction,
   }))
 })

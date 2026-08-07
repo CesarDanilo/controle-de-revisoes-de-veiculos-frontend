@@ -30,9 +30,16 @@ const COLUNAS = [
   { status: 'cancelado', titulo: 'Cancelado', cor: 'bg-red-400' },
 ]
 
+// 🔧 CORRIGIDO — "Pendente" (status de PAGAMENTO) usava o mesmo laranja/
+// âmbar da coluna "Em andamento" (status de ETAPA do workflow). Como são
+// dois conceitos diferentes competindo pela mesma cor, ficava mais difícil
+// escanear visualmente "quais cards estão com pagamento pendente" x
+// "quais estão em andamento" — a cor deixava de ser um atalho confiável.
+// Agora o badge de pagamento usa uma paleta própria (cinza/slate para
+// Pendente, verde para Pago), totalmente separada da paleta das colunas.
 const PAGAMENTO_BADGE = {
   pago: { label: 'Pago', classes: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20' },
-  pendente: { label: 'Pendente', classes: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
+  pendente: { label: 'Pendente', classes: 'bg-slate-100 text-slate-600 ring-slate-400/30' },
 }
 
 // ---------------------------------------------------------------------------

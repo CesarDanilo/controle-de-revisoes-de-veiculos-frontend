@@ -765,11 +765,19 @@ onMounted(loadAll)
         <!-- ====== RANKINGS ====== -->
         <div class="mb-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ReportPanel title="Marcas com mais revisões" :description="periodLabel">
-            <RankingList :items="brandsRevisionItems" accent-class="bg-green-500" />
+            <RankingList
+              :items="brandsRevisionItems"
+              accent-class="bg-green-500"
+              :empty-label="`Nenhum dado no período selecionado (${periodLabel}) — experimente ampliar o intervalo.`"
+            />
           </ReportPanel>
 
           <ReportPanel title="Clientes mais frequentes" :description="periodLabel">
-            <RankingList :items="peopleRevisionItems" accent-class="bg-amber-500" />
+            <RankingList
+              :items="peopleRevisionItems"
+              accent-class="bg-amber-500"
+              :empty-label="`Nenhum dado no período selecionado (${periodLabel}) — experimente ampliar o intervalo.`"
+            />
           </ReportPanel>
         </div>
 
@@ -787,7 +795,10 @@ onMounted(loadAll)
           </ReportPanel>
 
           <ReportPanel title="Marcas por gênero" description="Todos os períodos">
-            <BarChart :chart-data="brandsByGenderChart" />
+            <p v-if="!data.brandsByGender.length" class="py-8 text-center text-sm text-ink-400">
+              Nenhum dado disponível ainda. Assim que houver revisões de veículos com marca e gênero do proprietário cadastrados, a comparação aparece aqui.
+            </p>
+            <BarChart v-else :chart-data="brandsByGenderChart" />
           </ReportPanel>
         </div>
 

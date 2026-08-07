@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, unref, watch } from 'vue'
-import { useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/vue-query'
 import { Users, Car, Wrench, Wallet, RefreshCw } from '@lucide/vue'
 import AppShell from '../components/layout/AppShell.vue'
 import BaseButton from '../components/ui/BaseButton.vue'
@@ -29,8 +29,6 @@ watch(peopleError, (message) => {
   if (message) toast.error(message)
 })
 
-// 🟢 NOVO — os 4 cards do topo vêm de uma única chamada agregada,
-// calculada no backend (COUNT/SUM), sem trafegar listas completas.
 const {
   data: summary,
   isLoading: summaryLoading,
@@ -38,6 +36,7 @@ const {
 } = useQuery({
   queryKey: ['dashboard-summary'],
   queryFn: () => dashboardService.getSummary(),
+  placeholderData: keepPreviousData,
 })
 
 watch(summaryError, (err) => {
@@ -195,13 +194,7 @@ const closeVehicleFormModal = () => {
 
 <template>
   <AppShell title="Painel" subtitle="Visão geral do sistema.">
-    <!-- 🔧 CORRIGIDO — GettingStartedCard estava sendo renderizado dentro do
-         slot #actions (o slot de botões ao lado do título no AppShell), o
-         que não fazia sentido pra um card grande de onboarding. Removido
-         daqui; agora vive no corpo da página, condicionado ao estado dos
-         dados (ver abaixo). -->
     <template #actions>
-      <!-- 🟢 NOVO — botão de atualizar manual, sem reload de página -->
       <BaseButton
         variant="secondary"
         :disabled="isRefreshing"
@@ -219,14 +212,6 @@ const closeVehicleFormModal = () => {
       </router-link>
     </template>
 
-    <!-- 🟢 NOVO — ONBOARDING: exibido só enquanto não houver nenhum
-         proprietário cadastrado (o básico pro fluxo pessoa → veículo →
-         revisão fazer sentido). Evita mostrar KPIs zerados e "Próximas
-         revisões" vazio pra quem está chegando agora no sistema; o card
-         guia exatamente o primeiro passo (cadastrar um proprietário).
-         Durante o carregamento inicial (isLoading), não decidimos ainda —
-         evita um "flash" trocando de onboarding pra painel normal assim
-         que os dados chegam. -->
     <GettingStartedCard
       v-if="!isLoading && !hasPeople"
       :has-people="hasPeople"
@@ -234,11 +219,6 @@ const closeVehicleFormModal = () => {
       :has-revisions="hasRevisions"
     />
 
-    <!-- 🟢 NOVO — PAINEL NORMAL: assim que existir pelo menos um
-         proprietário, o onboarding some e entram os KPIs + próximas
-         revisões, que synchronize com dados reais. Durante o carregamento
-         inicial também cai aqui, pra manter os esqueletos de loading dos
-         StatCards em vez de piscar o onboarding antes da resposta chegar. -->
     <template v-else>
       <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
